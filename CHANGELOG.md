@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Built-in native Libadwaita **Administrator Password Dialog** (`ElevationMethod::BuiltInSudo` via `sudo -S` stdin pipe) so **Apply & Rebuild** opens a graphical password prompt on every Wayland compositor (Niri, Hyprland, Sway, GNOME, KDE) even without a running Polkit agent.
+- Branded **About NixApps** dialog (`help-about-symbolic`) with embedded NixApps SVG logo, version, GitHub link, and AI transparency summary.
+- Embedded stylized **NixOS snowflake SVG** in the Setup hero.
+- Added `adwaita-icon-theme`, `hicolor-icon-theme`, `librsvg`, and `gsettings-desktop-schemas` to `flake.nix` (`packages.default` and `devShells.default`).
+
 ### Fixed
-- Fixed `pkexec` failing inside `nix develop` / Nix shells with `The value for the SHELL variable was not found in the /etc/shells file` by resolving a valid shell from `/etc/shells` and preserving standard NixOS system `PATH` entries during elevated rebuilds.
+- Upgraded all action buttons (Install, Remove/Uninstall, Apply & Rebuild, Review Diff, Homepage, Copy, Sync, Inspect Dependencies) to use `adw::ButtonContent` so icons and labels render side by side in GTK4.
+- Fixed `pkexec` failing inside `nix develop` / Nix shells with `The value for the SHELL variable was not found in the /etc/shells file` by resolving a valid shell from `/etc/shells`, detaching stdin, and preserving standard NixOS system `PATH` entries during elevated rebuilds.
 
 ## [1.0.0] - 2026-11-25
 

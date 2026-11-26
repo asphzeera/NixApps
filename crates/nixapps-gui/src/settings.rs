@@ -2,7 +2,9 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use nixapps_core::{ConfigTarget, ManagedConfig, RebuildCommand, suggest_rebuild_command};
+use nixapps_core::{
+    ConfigTarget, ElevationMethod, ManagedConfig, RebuildCommand, suggest_rebuild_command,
+};
 use serde::{Deserialize, Serialize};
 
 /// Persistent GUI user settings stored in `~/.config/nixapps/settings.json`.
@@ -23,9 +25,9 @@ pub struct AppSettings {
     /// Optional custom rebuild command (e.g. `nixos-rebuild switch --flake ~/av-dotfiles#avmonster`).
     #[serde(default)]
     pub rebuild_command: Option<String>,
-    /// Whether to invoke the rebuild command through `pkexec` (Polkit) for root elevation.
-    #[serde(default = "default_true")]
-    pub rebuild_use_pkexec: bool,
+    /// Privilege elevation strategy (`BuiltInSudo`, `Polkit`, or `None`).
+    #[serde(default)]
+    pub rebuild_elevation: Option<ElevationMethod>,
 }
 
 fn default_true() -> bool {
@@ -41,7 +43,7 @@ impl Default for AppSettings {
             include_unfree: true,
             github_token: None,
             rebuild_command: None,
-            rebuild_use_pkexec: true,
+            rebuild_elevation: None,
         }
     }
 }
@@ -59,16 +61,7 @@ impl AppSettings {
 
     /// Returns the effective [`RebuildCommand`] (either user-configured or auto-suggested).
     pub fn effective_rebuild_command(&self) -> RebuildCommand {
-        if let Some(cmd) = self.rebuild_command.as_deref()
-            && !cmd.trim().is_empty()
-        {
-            return RebuildCommand {
-                command: cmd.trim().to_string(),
-                use_pkexec: self.rebuild_use_pkexec,
-            };
-        }
-
-        if let Some(dir) = &self.config_dir {
+        let suggested = if let Some(dir) = &self.config_dir {
             suggest_rebuild_command(dir, self.target)
         } else {
             RebuildCommand {
@@ -76,9 +69,24 @@ impl AppSettings {
                     ConfigTarget::HomeManager => "home-manager switch".to_string(),
                     ConfigTarget::NixosSystem => "nixos-rebuild switch".to_string(),
                 },
-                use_pkexec: matches!(self.target, ConfigTarget::NixosSystem),
+                elevation: match self.target {
+                    ConfigTarget::HomeManager => ElevationMethod::None,
+                    ConfigTarget::NixosSystem => ElevationMethod::BuiltInSudo,
+                },
             }
-        }
+        };
+
+        let command = self
+            .rebuild_command
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or(suggested.command);
+
+        let elevation = self.rebuild_elevation.unwrap_or(suggested.elevation);
+
+        RebuildCommand { command, elevation }
     }
 
     /// Loads settings from `~/.config/nixapps/settings.json`, or returns defaults if missing.

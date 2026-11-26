@@ -22,11 +22,15 @@
           libadwaita
           glib
           gdk-pixbuf
+          librsvg
           pango
           cairo
           graphene
           sqlite
           openssl
+          adwaita-icon-theme
+          hicolor-icon-theme
+          gsettings-desktop-schemas
         ];
 
         nixapps = pkgs.rustPlatform.buildRustPackage {
@@ -46,7 +50,7 @@
           buildInputs = runtimeInputs;
 
           # Integration tests invoke `git` and `nix-instantiate`, which are unavailable in the
-          # pure Nix sandbox; run unit tests that don't require external Nix/Git binaries.
+          # pure Nix sandbox; run unit tests in CI/devShell.
           doCheck = false;
 
           postInstall = ''
@@ -97,7 +101,9 @@
           RUST_BACKTRACE = "1";
 
           shellHook = ''
-            echo "NixApps devShell loaded (Rust $(rustc --version | cut -d' ' -f2) + GTK4/Libadwaita)"
+            export XDG_DATA_DIRS="${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:${pkgs.gtk4}/share:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+            export GDK_PIXBUF_MODULE_FILE="${pkgs.librsvg}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+            echo "NixApps devShell loaded (Rust $(rustc --version | cut -d' ' -f2) + GTK4/Libadwaita + Adwaita Icons)"
           '';
         };
 

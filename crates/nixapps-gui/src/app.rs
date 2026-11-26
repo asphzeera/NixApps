@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use nixapps_core::{
-    CatalogDb, Category, ConfigTarget, EnrichedPackageInfo, FEATURED_ATTRS, InstallMode,
-    ManagedApp, ManagedState, PackageDependencies, PackageRecord, RebuildOutcome, SearchQuery,
-    SyncInfo, WriteOptions, cached_icon_path, diff_strings, enrich_package, fetch_icon_cached,
-    inspect_dependencies, onboarding_import_snippet, render_nix_module, run_rebuild_streaming,
-    suggest_rebuild_command, sync_channel,
+    CatalogDb, Category, ConfigTarget, ElevationMethod, EnrichedPackageInfo, FEATURED_ATTRS,
+    InstallMode, ManagedApp, ManagedState, PackageDependencies, PackageRecord, RebuildOutcome,
+    SearchQuery, SyncInfo, WriteOptions, cached_icon_path, diff_strings, enrich_package,
+    fetch_icon_cached, inspect_dependencies, onboarding_import_snippet, render_nix_module,
+    run_rebuild_streaming, suggest_rebuild_command, sync_channel,
 };
 use relm4::adw;
 use relm4::adw::prelude::*;
@@ -19,7 +19,8 @@ use relm4::prelude::*;
 
 use crate::settings::{AppSettings, catalog_db_path, icons_cache_dir};
 use crate::ui_helpers::{
-    apply_app_icon, category_icon_name, format_count, format_stars, install_mode_label,
+    apply_app_icon, category_icon_name, format_count, format_stars, icon_button,
+    install_mode_label, nixapps_logo_texture, nixos_snowflake_texture, set_icon_button,
 };
 
 const ICON_WORKER_THREADS: usize = 6;
@@ -50,7 +51,7 @@ pub struct NixAppsModel {
     detail_deps_error: Option<String>,
     detail_error: Option<String>,
 
-    // Diff & Rebuild workflow state (Phase 4)
+    // Diff & Rebuild workflow state
     baseline_nix: String,
     pending_changes: usize,
     last_git_warning: Option<String>,
@@ -69,6 +70,7 @@ pub enum AppMsg {
     CloseDetail,
     SwitchTab(&'static str),
     BannerActionClicked,
+    OpenAboutDialog,
 
     // Background Metadata & Icons
     IconResolved {
@@ -88,6 +90,7 @@ pub enum AppMsg {
     // Package Actions
     QuickInstall(String),
     QuickUninstall(String),
+    ToggleInstall(String),
     SaveDetailConfig {
         attr_path: String,
         mode: InstallMode,
@@ -96,10 +99,11 @@ pub enum AppMsg {
     InsertNixTemplate(&'static str),
     OpenHomepage(String),
 
-    // Diff Preview & System Rebuild (Phase 4)
+    // Diff Preview & System Rebuild
     OpenDiffDialog,
     OpenRebuildDialog,
-    StartRebuild,
+    RequestRebuild,
+    StartRebuildWithPassword(Option<String>),
     RebuildLogLine(String),
     RebuildFinished(Result<RebuildOutcome, String>),
 
@@ -110,7 +114,7 @@ pub enum AppMsg {
     SetChannel(String),
     SetGithubToken(String),
     SetRebuildCommand(String),
-    SetRebuildUsePkexec(bool),
+    SetRebuildElevation(ElevationMethod),
     AutoDetectRebuildCommand,
     InitializeManagedConfig,
     CopyImportSnippet,
@@ -172,17 +176,33 @@ pub struct AppWidgets {
     setup_channel_entry: adw::EntryRow,
     setup_github_token_entry: adw::PasswordEntryRow,
     setup_rebuild_cmd_entry: adw::EntryRow,
-    setup_rebuild_pkexec_row: adw::SwitchRow,
+    setup_rebuild_elevation_row: adw::ComboRow,
     setup_import_label: gtk::Label,
     setup_sync_status_row: adw::ActionRow,
 
-    // Rebuild modal widgets (live log streaming)
+    // Rebuild modal widgets
     rebuild_dialog: adw::Dialog,
     rebuild_cmd_label: gtk::Label,
     rebuild_status_label: gtk::Label,
     rebuild_run_btn: gtk::Button,
     rebuild_log_buffer: gtk::TextBuffer,
     rebuild_log_view: gtk::TextView,
+}
+
+fn elevation_to_index(method: ElevationMethod) -> u32 {
+    match method {
+        ElevationMethod::BuiltInSudo => 0,
+        ElevationMethod::Polkit => 1,
+        ElevationMethod::None => 2,
+    }
+}
+
+fn index_to_elevation(idx: u32) -> ElevationMethod {
+    match idx {
+        1 => ElevationMethod::Polkit,
+        2 => ElevationMethod::None,
+        _ => ElevationMethod::BuiltInSudo,
+    }
 }
 
 impl NixAppsModel {
@@ -252,8 +272,6 @@ impl NixAppsModel {
         }
     }
 
-    /// Spawns a small pool of concurrent worker threads to fetch missing icons rapidly
-    /// using the shared keep-alive HTTP client (stopping early if a newer view starts).
     fn spawn_icon_batch(&self, packages: Vec<PackageRecord>, sender: &ComponentSender<Self>) {
         let pending: VecDeque<PackageRecord> = packages
             .into_iter()
@@ -456,6 +474,15 @@ impl Component for NixAppsModel {
             back_button.connect_clicked(move |_| s.input(AppMsg::CloseDetail));
         }
 
+        let about_button = gtk::Button::builder()
+            .icon_name("help-about-symbolic")
+            .tooltip_text("About NixApps")
+            .build();
+        {
+            let s = sender.clone();
+            about_button.connect_clicked(move |_| s.input(AppMsg::OpenAboutDialog));
+        }
+
         let sync_button = gtk::Button::builder()
             .icon_name("view-refresh-symbolic")
             .tooltip_text("Sync Nixpkgs catalog")
@@ -468,6 +495,7 @@ impl Component for NixAppsModel {
         let header = adw::HeaderBar::new();
         header.pack_start(&back_button);
         header.set_title_widget(Some(&view_switcher));
+        header.pack_end(&about_button);
         header.pack_end(&sync_button);
 
         // --- Status Banner ---
@@ -545,7 +573,6 @@ impl Component for NixAppsModel {
             .margin_bottom(8)
             .build();
 
-        // Store Home View (Categories FlowBox + Featured Apps FlowBox)
         let cat_heading = gtk::Label::builder()
             .label("Browse Categories")
             .css_classes(["title-3"])
@@ -603,7 +630,6 @@ impl Component for NixAppsModel {
             .child(&home_clamp)
             .build();
 
-        // Search / Category Filtered Results List
         let results_list = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::None)
             .css_classes(["boxed-list"])
@@ -623,11 +649,12 @@ impl Component for NixAppsModel {
             .child(&results_clamp)
             .build();
 
-        let explore_empty_btn = gtk::Button::builder()
-            .label("Sync Nixpkgs Catalog")
-            .halign(gtk::Align::Center)
-            .css_classes(["suggested-action", "pill"])
-            .build();
+        let explore_empty_btn = icon_button(
+            "view-refresh-symbolic",
+            "Sync Nixpkgs Catalog",
+            &["suggested-action", "pill"],
+        );
+        explore_empty_btn.set_halign(gtk::Align::Center);
         {
             let s = sender.clone();
             explore_empty_btn.connect_clicked(move |_| s.input(AppMsg::StartSync));
@@ -671,20 +698,17 @@ impl Component for NixAppsModel {
             .hexpand(true)
             .build();
 
-        let review_diff_btn = gtk::Button::builder()
-            .label("Review Diff")
-            .icon_name("document-properties-symbolic")
-            .build();
+        let review_diff_btn = icon_button("document-edit-symbolic", "Review Diff", &[]);
         {
             let s = sender.clone();
             review_diff_btn.connect_clicked(move |_| s.input(AppMsg::OpenDiffDialog));
         }
 
-        let apply_rebuild_btn = gtk::Button::builder()
-            .label("Apply & Rebuild")
-            .icon_name("system-software-install-symbolic")
-            .css_classes(["suggested-action"])
-            .build();
+        let apply_rebuild_btn = icon_button(
+            "emblem-synchronizing-symbolic",
+            "Apply & Rebuild",
+            &["suggested-action"],
+        );
         {
             let s = sender.clone();
             apply_rebuild_btn.connect_clicked(move |_| s.input(AppMsg::OpenRebuildDialog));
@@ -733,10 +757,7 @@ impl Component for NixAppsModel {
             .halign(gtk::Align::Start)
             .hexpand(true)
             .build();
-        let copy_import_btn_2 = gtk::Button::builder()
-            .label("Copy Import Line")
-            .icon_name("edit-copy-symbolic")
-            .build();
+        let copy_import_btn_2 = icon_button("edit-copy-symbolic", "Copy Import Line", &[]);
         {
             let s = sender.clone();
             copy_import_btn_2.connect_clicked(move |_| s.input(AppMsg::CopyImportSnippet));
@@ -767,11 +788,12 @@ impl Component for NixAppsModel {
             .child(&installed_clamp)
             .build();
 
-        let browse_btn = gtk::Button::builder()
-            .label("Browse Packages")
-            .halign(gtk::Align::Center)
-            .css_classes(["suggested-action", "pill"])
-            .build();
+        let browse_btn = icon_button(
+            "system-search-symbolic",
+            "Browse Packages",
+            &["suggested-action", "pill"],
+        );
+        browse_btn.set_halign(gtk::Align::Center);
         {
             let s = sender.clone();
             browse_btn.connect_clicked(move |_| s.input(AppMsg::SwitchTab("explore")));
@@ -798,24 +820,26 @@ impl Component for NixAppsModel {
             "folder-download-symbolic",
         );
 
-        // --- TAB 3: ONBOARDING & SETUP ---
+        // --- TAB 3: ONBOARDING & SETUP (with official NixOS Snowflake Hero!) ---
         let setup_hero = adw::StatusPage::builder()
-            .icon_name("preferences-system-symbolic")
-            .title("Declarative Nix Setup")
+            .title("Declarative NixOS Setup")
             .description(
                 "NixApps never edits your hand-written dotfiles. Choose your configuration folder, and NixApps will manage a single dedicated .nix module that you import once.",
             )
             .build();
+        if let Some(tex) = nixos_snowflake_texture() {
+            setup_hero.set_paintable(Some(&tex));
+        } else {
+            setup_hero.set_icon_name(Some("preferences-system-symbolic"));
+        }
 
         let config_group = adw::PreferencesGroup::builder()
             .title("1. Configuration Binding")
             .description("Point NixApps to your NixOS / Home Manager configuration directory.")
             .build();
 
-        let pick_folder_btn = gtk::Button::builder()
-            .label("Choose Folder…")
-            .valign(gtk::Align::Center)
-            .build();
+        let pick_folder_btn = icon_button("folder-open-symbolic", "Choose Folder…", &[]);
+        pick_folder_btn.set_valign(gtk::Align::Center);
         {
             let s = sender.clone();
             pick_folder_btn.connect_clicked(move |_| s.input(AppMsg::PickConfigFolder));
@@ -866,12 +890,13 @@ impl Component for NixAppsModel {
         }
         config_group.add(&setup_channel_entry);
 
-        let init_module_btn = gtk::Button::builder()
-            .label("Save & Initialize Managed Module")
-            .css_classes(["suggested-action", "pill"])
-            .halign(gtk::Align::Start)
-            .margin_top(10)
-            .build();
+        let init_module_btn = icon_button(
+            "document-save-symbolic",
+            "Save & Initialize Managed Module",
+            &["suggested-action", "pill"],
+        );
+        init_module_btn.set_halign(gtk::Align::Start);
+        init_module_btn.set_margin_top(10);
         {
             let s = sender.clone();
             init_module_btn.connect_clicked(move |_| s.input(AppMsg::InitializeManagedConfig));
@@ -892,11 +917,8 @@ impl Component for NixAppsModel {
             .wrap(true)
             .css_classes(["nix-code-view"])
             .build();
-        let copy_snippet_btn = gtk::Button::builder()
-            .label("Copy")
-            .icon_name("edit-copy-symbolic")
-            .valign(gtk::Align::Center)
-            .build();
+        let copy_snippet_btn = icon_button("edit-copy-symbolic", "Copy", &[]);
+        copy_snippet_btn.set_valign(gtk::Align::Center);
         {
             let s = sender.clone();
             copy_snippet_btn.connect_clicked(move |_| s.input(AppMsg::CopyImportSnippet));
@@ -918,10 +940,8 @@ impl Component for NixAppsModel {
             .margin_top(16)
             .build();
 
-        let sync_now_btn = gtk::Button::builder()
-            .label("Sync Now")
-            .valign(gtk::Align::Center)
-            .build();
+        let sync_now_btn = icon_button("view-refresh-symbolic", "Sync Now", &[]);
+        sync_now_btn.set_valign(gtk::Align::Center);
         {
             let s = sender.clone();
             sync_now_btn.connect_clicked(move |_| s.input(AppMsg::StartSync));
@@ -945,7 +965,7 @@ impl Component for NixAppsModel {
         }
         sync_group.add(&setup_github_token_entry);
 
-        // System Rebuild Runner Configuration (Phase 4)
+        // System Rebuild Runner Configuration
         let rebuild_group = adw::PreferencesGroup::builder()
             .title("4. System Rebuild Command")
             .description("Queue multiple app installs/removals, then click Apply & Rebuild to activate them on your NixOS system.")
@@ -965,24 +985,32 @@ impl Component for NixAppsModel {
         }
         rebuild_group.add(&setup_rebuild_cmd_entry);
 
-        let setup_rebuild_pkexec_row = adw::SwitchRow::builder()
-            .title("Elevate with Polkit (`pkexec`)")
-            .subtitle("Shows your desktop password prompt for `nixos-rebuild switch`")
-            .active(effective_rebuild.use_pkexec)
+        let elevation_model = gtk::StringList::new(&[
+            "Built-in Password Dialog (sudo) — Recommended",
+            "Desktop Polkit Agent (pkexec)",
+            "None (no root — standalone home-manager)",
+        ]);
+        let setup_rebuild_elevation_row = adw::ComboRow::builder()
+            .title("Privilege Elevation")
+            .subtitle(
+                "Built-in dialog works on every Wayland compositor even without a Polkit agent",
+            )
+            .model(&elevation_model)
+            .selected(elevation_to_index(effective_rebuild.elevation))
             .build();
         {
             let s = sender.clone();
-            setup_rebuild_pkexec_row.connect_active_notify(move |row| {
-                s.input(AppMsg::SetRebuildUsePkexec(row.is_active()));
+            setup_rebuild_elevation_row.connect_selected_notify(move |row| {
+                s.input(AppMsg::SetRebuildElevation(index_to_elevation(
+                    row.selected(),
+                )));
             });
         }
-        rebuild_group.add(&setup_rebuild_pkexec_row);
+        rebuild_group.add(&setup_rebuild_elevation_row);
 
-        let auto_detect_btn = gtk::Button::builder()
-            .label("Auto-Detect Command")
-            .halign(gtk::Align::Start)
-            .margin_top(8)
-            .build();
+        let auto_detect_btn = icon_button("find-location-symbolic", "Auto-Detect Command", &[]);
+        auto_detect_btn.set_halign(gtk::Align::Start);
+        auto_detect_btn.set_margin_top(8);
         {
             let s = sender.clone();
             auto_detect_btn.connect_clicked(move |_| s.input(AppMsg::AutoDetectRebuildCommand));
@@ -1027,7 +1055,7 @@ impl Component for NixAppsModel {
             view_stack.set_visible_child_name("explore");
         }
 
-        // --- DETAIL VIEW (separate page on root_stack) ---
+        // --- DETAIL VIEW ---
         let detail_icon = gtk::Image::builder()
             .pixel_size(64)
             .css_classes(["app-hero-icon"])
@@ -1060,17 +1088,15 @@ impl Component for NixAppsModel {
         detail_title_col.append(&detail_subtitle);
         detail_title_col.append(&detail_badges_box);
 
-        let detail_primary_btn = gtk::Button::builder()
-            .label("Install")
-            .valign(gtk::Align::Center)
-            .css_classes(["suggested-action", "pill"])
-            .build();
+        let detail_primary_btn = icon_button(
+            "folder-download-symbolic",
+            "Install",
+            &["suggested-action", "pill"],
+        );
+        detail_primary_btn.set_valign(gtk::Align::Center);
 
-        let detail_homepage_btn = gtk::Button::builder()
-            .label("Homepage")
-            .icon_name("adw-external-link-symbolic")
-            .valign(gtk::Align::Center)
-            .build();
+        let detail_homepage_btn = icon_button("web-browser-symbolic", "Homepage", &[]);
+        detail_homepage_btn.set_valign(gtk::Align::Center);
 
         let detail_actions_col = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
@@ -1116,11 +1142,8 @@ impl Component for NixAppsModel {
             .margin_top(18)
             .build();
 
-        let detail_deps_btn = gtk::Button::builder()
-            .label("Inspect Dependencies")
-            .icon_name("system-search-symbolic")
-            .halign(gtk::Align::Start)
-            .build();
+        let detail_deps_btn = icon_button("system-search-symbolic", "Inspect Dependencies", &[]);
+        detail_deps_btn.set_halign(gtk::Align::Start);
 
         let detail_deps_status = gtk::Label::builder()
             .halign(gtk::Align::Start)
@@ -1164,20 +1187,19 @@ impl Component for NixAppsModel {
             .margin_bottom(6)
             .build();
 
-        let tmpl_programs_btn = gtk::Button::builder()
-            .label("Insert programs.<name>.enable")
-            .css_classes(["flat"])
-            .build();
+        let tmpl_programs_btn = icon_button(
+            "list-add-symbolic",
+            "Insert programs.<name>.enable",
+            &["flat"],
+        );
         {
             let s = sender.clone();
             tmpl_programs_btn.connect_clicked(move |_| {
                 s.input(AppMsg::InsertNixTemplate("programs"));
             });
         }
-        let tmpl_override_btn = gtk::Button::builder()
-            .label("Insert override template")
-            .css_classes(["flat"])
-            .build();
+        let tmpl_override_btn =
+            icon_button("list-add-symbolic", "Insert override template", &["flat"]);
         {
             let s = sender.clone();
             tmpl_override_btn.connect_clicked(move |_| {
@@ -1215,12 +1237,13 @@ impl Component for NixAppsModel {
             .margin_top(6)
             .build();
 
-        let save_custom_btn = gtk::Button::builder()
-            .label("Save & Validate Custom Config")
-            .css_classes(["suggested-action"])
-            .halign(gtk::Align::Start)
-            .margin_top(10)
-            .build();
+        let save_custom_btn = icon_button(
+            "document-save-symbolic",
+            "Save & Validate Custom Config",
+            &["suggested-action"],
+        );
+        save_custom_btn.set_halign(gtk::Align::Start);
+        save_custom_btn.set_margin_top(10);
 
         let custom_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -1263,15 +1286,10 @@ impl Component for NixAppsModel {
         {
             let s = sender.clone();
             let title_lbl = detail_subtitle.clone();
-            detail_primary_btn.connect_clicked(move |btn| {
+            detail_primary_btn.connect_clicked(move |_| {
                 let attr = title_lbl.widget_name().to_string();
-                if attr.is_empty() {
-                    return;
-                }
-                if btn.label().as_deref() == Some("Uninstall") {
-                    s.input(AppMsg::QuickUninstall(attr));
-                } else {
-                    s.input(AppMsg::QuickInstall(attr));
+                if !attr.is_empty() {
+                    s.input(AppMsg::ToggleInstall(attr));
                 }
             });
         }
@@ -1329,8 +1347,6 @@ impl Component for NixAppsModel {
         root_stack.add_named(&detail_scroll, Some("detail"));
         root_stack.set_visible_child_name("tabs");
 
-        // FIX: Switching tabs in the top ViewSwitcher while an app detail page is open
-        // immediately dismisses the detail overlay so the chosen tab is revealed.
         {
             let s = sender.clone();
             let rs = root_stack.clone();
@@ -1341,7 +1357,7 @@ impl Component for NixAppsModel {
             });
         }
 
-        // --- Rebuild Dialog (Phase 4) ---
+        // --- Rebuild Dialog ---
         let rebuild_dialog = adw::Dialog::builder()
             .title("Apply & Rebuild System")
             .content_width(720)
@@ -1384,19 +1400,17 @@ impl Component for NixAppsModel {
             .child(&rebuild_log_scroll)
             .build();
 
-        let rebuild_run_btn = gtk::Button::builder()
-            .label("Run Rebuild Now")
-            .css_classes(["suggested-action", "pill"])
-            .build();
+        let rebuild_run_btn = icon_button(
+            "emblem-synchronizing-symbolic",
+            "Run Rebuild Now",
+            &["suggested-action", "pill"],
+        );
         {
             let s = sender.clone();
-            rebuild_run_btn.connect_clicked(move |_| s.input(AppMsg::StartRebuild));
+            rebuild_run_btn.connect_clicked(move |_| s.input(AppMsg::RequestRebuild));
         }
 
-        let rebuild_diff_btn = gtk::Button::builder()
-            .label("Review Diff")
-            .icon_name("document-properties-symbolic")
-            .build();
+        let rebuild_diff_btn = icon_button("document-edit-symbolic", "Review Diff", &[]);
         {
             let s = sender.clone();
             rebuild_diff_btn.connect_clicked(move |_| s.input(AppMsg::OpenDiffDialog));
@@ -1485,7 +1499,7 @@ impl Component for NixAppsModel {
             setup_channel_entry,
             setup_github_token_entry,
             setup_rebuild_cmd_entry,
-            setup_rebuild_pkexec_row,
+            setup_rebuild_elevation_row,
             setup_import_label,
             setup_sync_status_row,
             rebuild_dialog,
@@ -1609,6 +1623,10 @@ impl Component for NixAppsModel {
                 }
                 return;
             }
+            AppMsg::OpenAboutDialog => {
+                show_about_dialog(&widgets.window);
+                return;
+            }
             AppMsg::IconResolved {
                 attr_path,
                 icon_path,
@@ -1677,6 +1695,14 @@ impl Component for NixAppsModel {
                         }
                     };
                     widgets.detail_nix_buffer.set_text(&snippet);
+                }
+                return;
+            }
+            AppMsg::ToggleInstall(attr) => {
+                if self.managed_state.is_installed(&attr) {
+                    sender.input(AppMsg::QuickUninstall(attr));
+                } else {
+                    sender.input(AppMsg::QuickInstall(attr));
                 }
                 return;
             }
@@ -1770,10 +1796,10 @@ impl Component for NixAppsModel {
             }
             AppMsg::OpenRebuildDialog => {
                 let cmd = self.settings.effective_rebuild_command();
-                let preview = if cmd.use_pkexec {
-                    format!("pkexec sh -c \"{}\"", cmd.command)
-                } else {
-                    cmd.command.clone()
+                let preview = match cmd.elevation {
+                    ElevationMethod::BuiltInSudo => format!("sudo {}", cmd.command),
+                    ElevationMethod::Polkit => format!("pkexec {}", cmd.command),
+                    ElevationMethod::None => cmd.command.clone(),
                 };
                 widgets.rebuild_cmd_label.set_label(&preview);
                 widgets.rebuild_status_label.set_label(&self.rebuild_status);
@@ -1781,28 +1807,48 @@ impl Component for NixAppsModel {
                 widgets.rebuild_dialog.present(Some(&widgets.window));
                 return;
             }
-            AppMsg::StartRebuild => {
+            AppMsg::RequestRebuild => {
+                if self.is_rebuilding {
+                    return;
+                }
+                let cmd = self.settings.effective_rebuild_command();
+                match cmd.elevation {
+                    ElevationMethod::BuiltInSudo => {
+                        show_password_prompt_dialog(&widgets.window, &cmd.command, &sender);
+                    }
+                    ElevationMethod::Polkit | ElevationMethod::None => {
+                        sender.input(AppMsg::StartRebuildWithPassword(None));
+                    }
+                }
+                return;
+            }
+            AppMsg::StartRebuildWithPassword(password) => {
                 if self.is_rebuilding {
                     return;
                 }
                 let cmd = self.settings.effective_rebuild_command();
                 self.is_rebuilding = true;
-                self.rebuild_status = "Running rebuild… (waiting for Polkit/Nix output)".into();
+                self.rebuild_status = "Running rebuild… streaming live Nix output".into();
                 widgets.rebuild_status_label.set_label(&self.rebuild_status);
                 widgets.rebuild_run_btn.set_sensitive(false);
-                widgets.rebuild_log_buffer.set_text(&format!(
-                    "$ {}{}\n\n",
-                    if cmd.use_pkexec { "pkexec " } else { "" },
-                    cmd.command
-                ));
+
+                let prefix = match cmd.elevation {
+                    ElevationMethod::BuiltInSudo => "sudo ",
+                    ElevationMethod::Polkit => "pkexec ",
+                    ElevationMethod::None => "",
+                };
+                widgets
+                    .rebuild_log_buffer
+                    .set_text(&format!("$ {prefix}{}\n\n", cmd.command));
 
                 let input_sender = sender.input_sender().clone();
                 thread::spawn(move || {
                     let line_sender = input_sender.clone();
-                    let res = run_rebuild_streaming(&cmd, |line| {
+                    let res = run_rebuild_streaming(&cmd, password.as_deref(), |line| {
                         let _ = line_sender.send(AppMsg::RebuildLogLine(line));
                     })
                     .map_err(|e| e.to_string());
+                    // `password` is dropped right here once the rebuild finishes.
                     let _ = input_sender.send(AppMsg::RebuildFinished(res));
                 });
                 return;
@@ -1871,11 +1917,11 @@ impl Component for NixAppsModel {
                 if self.settings.rebuild_command.is_none() {
                     let suggested = suggest_rebuild_command(&path, self.settings.target);
                     self.settings.rebuild_command = Some(suggested.command.clone());
-                    self.settings.rebuild_use_pkexec = suggested.use_pkexec;
+                    self.settings.rebuild_elevation = Some(suggested.elevation);
                     widgets.setup_rebuild_cmd_entry.set_text(&suggested.command);
                     widgets
-                        .setup_rebuild_pkexec_row
-                        .set_active(suggested.use_pkexec);
+                        .setup_rebuild_elevation_row
+                        .set_selected(elevation_to_index(suggested.elevation));
                 }
                 let _ = self.settings.save();
                 self.reload_managed_state();
@@ -1903,21 +1949,22 @@ impl Component for NixAppsModel {
                 let _ = self.settings.save();
                 return;
             }
-            AppMsg::SetRebuildUsePkexec(use_pkexec) => {
-                self.settings.rebuild_use_pkexec = use_pkexec;
+            AppMsg::SetRebuildElevation(elevation) => {
+                self.settings.rebuild_elevation = Some(elevation);
                 let _ = self.settings.save();
                 return;
             }
             AppMsg::AutoDetectRebuildCommand => {
                 self.settings.rebuild_command = None;
+                self.settings.rebuild_elevation = None;
                 let suggested = self.settings.effective_rebuild_command();
                 self.settings.rebuild_command = Some(suggested.command.clone());
-                self.settings.rebuild_use_pkexec = suggested.use_pkexec;
+                self.settings.rebuild_elevation = Some(suggested.elevation);
                 let _ = self.settings.save();
                 widgets.setup_rebuild_cmd_entry.set_text(&suggested.command);
                 widgets
-                    .setup_rebuild_pkexec_row
-                    .set_active(suggested.use_pkexec);
+                    .setup_rebuild_elevation_row
+                    .set_selected(elevation_to_index(suggested.elevation));
                 toast_msg = Some(format!("Detected: {}", suggested.command));
             }
             AppMsg::InitializeManagedConfig => {
@@ -2005,6 +2052,200 @@ impl Component for NixAppsModel {
     }
 }
 
+/// Shows a native Libadwaita password popup dialog for `sudo -S` authentication.
+fn show_password_prompt_dialog(
+    parent: &adw::ApplicationWindow,
+    command_preview: &str,
+    sender: &ComponentSender<NixAppsModel>,
+) {
+    let dialog = adw::Dialog::builder()
+        .title("Authentication Required")
+        .content_width(440)
+        .build();
+
+    let lock_icon = gtk::Image::builder()
+        .icon_name("dialog-password-symbolic")
+        .pixel_size(48)
+        .margin_top(8)
+        .build();
+
+    let heading = gtk::Label::builder()
+        .label("Administrator Password Required")
+        .css_classes(["title-3"])
+        .build();
+
+    let desc = gtk::Label::builder()
+        .label("Enter your user password to activate your declarative NixOS configuration:")
+        .css_classes(["dim-label"])
+        .wrap(true)
+        .justify(gtk::Justification::Center)
+        .build();
+
+    let cmd_box = gtk::Label::builder()
+        .label(command_preview)
+        .css_classes(["nix-code-view", "snippet-card"])
+        .wrap(true)
+        .selectable(true)
+        .halign(gtk::Align::Fill)
+        .xalign(0.0)
+        .build();
+
+    let pw_entry = gtk::PasswordEntry::builder()
+        .placeholder_text("Enter sudo password…")
+        .show_peek_icon(true)
+        .hexpand(true)
+        .margin_top(6)
+        .build();
+
+    let cancel_btn = gtk::Button::builder().label("Cancel").build();
+    let confirm_btn = icon_button(
+        "emblem-synchronizing-symbolic",
+        "Authenticate & Rebuild",
+        &["suggested-action"],
+    );
+
+    let btn_row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .halign(gtk::Align::End)
+        .margin_top(10)
+        .build();
+    btn_row.append(&cancel_btn);
+    btn_row.append(&confirm_btn);
+
+    let body = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(10)
+        .margin_top(12)
+        .margin_bottom(18)
+        .margin_start(18)
+        .margin_end(18)
+        .build();
+    body.append(&lock_icon);
+    body.append(&heading);
+    body.append(&desc);
+    body.append(&cmd_box);
+    body.append(&pw_entry);
+    body.append(&btn_row);
+
+    let tv = adw::ToolbarView::new();
+    tv.add_top_bar(&adw::HeaderBar::new());
+    tv.set_content(Some(&body));
+    dialog.set_child(Some(&tv));
+
+    {
+        let dlg = dialog.clone();
+        cancel_btn.connect_clicked(move |_| {
+            dlg.close();
+        });
+    }
+    {
+        let dlg = dialog.clone();
+        let entry = pw_entry.clone();
+        let s = sender.clone();
+        let submit = move || {
+            let pw = entry.text().to_string();
+            entry.set_text("");
+            dlg.close();
+            s.input(AppMsg::StartRebuildWithPassword(Some(pw)));
+        };
+
+        let submit_clone = submit.clone();
+        confirm_btn.connect_clicked(move |_| submit_clone());
+        pw_entry.connect_activate(move |_| submit());
+    }
+
+    dialog.present(Some(parent));
+    pw_entry.grab_focus();
+}
+
+/// Shows a branded Libadwaita About dialog with NixApps logo and AI transparency credits.
+fn show_about_dialog(parent: &adw::ApplicationWindow) {
+    let dialog = adw::Dialog::builder()
+        .title("About NixApps")
+        .content_width(420)
+        .build();
+
+    let logo_img = gtk::Image::builder().pixel_size(96).margin_top(8).build();
+    if let Some(tex) = nixapps_logo_texture() {
+        logo_img.set_paintable(Some(&tex));
+    } else if let Some(tex) = nixos_snowflake_texture() {
+        logo_img.set_paintable(Some(&tex));
+    } else {
+        logo_img.set_icon_name(Some("application-x-executable-symbolic"));
+    }
+
+    let name_lbl = gtk::Label::builder()
+        .label("NixApps")
+        .css_classes(["title-1"])
+        .build();
+
+    let ver_badge = gtk::Label::builder()
+        .label(format!("v{}", nixapps_core::version()))
+        .css_classes(["badge", "badge-stars"])
+        .halign(gtk::Align::Center)
+        .build();
+
+    let tagline = gtk::Label::builder()
+        .label("Native Declarative App Store for NixOS & Home Manager")
+        .css_classes(["dim-label"])
+        .wrap(true)
+        .justify(gtk::Justification::Center)
+        .build();
+
+    let info_group = adw::PreferencesGroup::builder().margin_top(10).build();
+    info_group.add(
+        &adw::ActionRow::builder()
+            .title("Repository")
+            .subtitle("https://github.com/asphzeera/NixApps")
+            .build(),
+    );
+    info_group.add(
+        &adw::ActionRow::builder()
+            .title("Development Model")
+            .subtitle("Human-in-the-Loop + AI-Assisted Engineering (MIT License)")
+            .build(),
+    );
+    info_group.add(
+        &adw::ActionRow::builder()
+            .title("Stack")
+            .subtitle("Rust + GTK4 + Libadwaita (Relm4) + SQLite FTS5")
+            .build(),
+    );
+
+    let github_btn = icon_button("web-browser-symbolic", "Open on GitHub", &["pill"]);
+    github_btn.set_halign(gtk::Align::Center);
+    github_btn.set_margin_top(8);
+    {
+        let win = parent.clone();
+        github_btn.connect_clicked(move |_| {
+            let launcher = gtk::UriLauncher::new("https://github.com/asphzeera/NixApps");
+            launcher.launch(Some(&win), gtk::gio::Cancellable::NONE, |_| {});
+        });
+    }
+
+    let body = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(8)
+        .margin_top(8)
+        .margin_bottom(22)
+        .margin_start(20)
+        .margin_end(20)
+        .build();
+    body.append(&logo_img);
+    body.append(&name_lbl);
+    body.append(&ver_badge);
+    body.append(&tagline);
+    body.append(&info_group);
+    body.append(&github_btn);
+
+    let tv = adw::ToolbarView::new();
+    tv.add_top_bar(&adw::HeaderBar::new());
+    tv.set_content(Some(&body));
+    dialog.set_child(Some(&tv));
+    dialog.present(Some(parent));
+}
+
 fn show_diff_dialog(parent: &adw::ApplicationWindow, diff_text: &str) {
     let dialog = adw::Dialog::builder()
         .title("Managed Module Diff")
@@ -2044,7 +2285,6 @@ fn refresh_all_views(
     widgets: &AppWidgets,
     sender: &ComponentSender<NixAppsModel>,
 ) {
-    // --- Sync button & Banner ---
     widgets.sync_button.set_sensitive(!model.is_syncing);
     if model.is_syncing {
         widgets.status_banner.set_title(&format!(
@@ -2225,15 +2465,9 @@ fn refresh_explore_view(
         }
 
         let action_btn = if installed {
-            gtk::Button::builder()
-                .label("Remove")
-                .css_classes(["flat"])
-                .build()
+            icon_button("user-trash-symbolic", "Remove", &["flat"])
         } else {
-            gtk::Button::builder()
-                .label("Install")
-                .css_classes(["suggested-action"])
-                .build()
+            icon_button("folder-download-symbolic", "Install", &["suggested-action"])
         };
 
         {
@@ -2462,11 +2696,12 @@ fn rebuild_installed_list(
         );
         row.add_prefix(&icon);
 
-        let remove_btn = gtk::Button::builder()
-            .label("Uninstall")
-            .css_classes(["destructive-action", "flat"])
-            .valign(gtk::Align::Center)
-            .build();
+        let remove_btn = icon_button(
+            "user-trash-symbolic",
+            "Uninstall",
+            &["destructive-action", "flat"],
+        );
+        remove_btn.set_valign(gtk::Align::Center);
         {
             let s = sender.clone();
             let attr = app.attr_path.clone();
@@ -2529,7 +2764,7 @@ fn refresh_setup_tab(model: &NixAppsModel, widgets: &AppWidgets) {
         &widgets.setup_channel_entry,
         &widgets.setup_github_token_entry,
         &widgets.setup_rebuild_cmd_entry,
-        &widgets.setup_rebuild_pkexec_row,
+        &widgets.setup_rebuild_elevation_row,
     );
 }
 
@@ -2673,7 +2908,11 @@ fn refresh_detail_dynamic_state(model: &NixAppsModel, widgets: &AppWidgets) {
 
     let installed = model.managed_state.is_installed(&pkg.attr_path);
     if installed {
-        widgets.detail_primary_btn.set_label("Uninstall");
+        set_icon_button(
+            &widgets.detail_primary_btn,
+            "user-trash-symbolic",
+            "Uninstall",
+        );
         widgets
             .detail_primary_btn
             .remove_css_class("suggested-action");
@@ -2681,7 +2920,11 @@ fn refresh_detail_dynamic_state(model: &NixAppsModel, widgets: &AppWidgets) {
             .detail_primary_btn
             .add_css_class("destructive-action");
     } else {
-        widgets.detail_primary_btn.set_label("Install");
+        set_icon_button(
+            &widgets.detail_primary_btn,
+            "folder-download-symbolic",
+            "Install",
+        );
         widgets
             .detail_primary_btn
             .remove_css_class("destructive-action");

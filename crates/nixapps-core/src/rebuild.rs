@@ -1,20 +1,39 @@
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::{NixAppsError, Result};
 use crate::models::ConfigTarget;
+
+const NIXOS_SAFE_PATH: &str =
+    "/run/wrappers/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin";
+
+/// How NixApps acquires elevated privileges when running system rebuild commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ElevationMethod {
+    /// Uses NixApps' built-in GTK4 password dialog and pipes password securely to `sudo -S`.
+    /// Works reliably on every Wayland compositor (Niri, Hyprland, Sway, GNOME, KDE) even
+    /// without a running Polkit authentication agent.
+    BuiltInSudo,
+    /// Uses desktop Polkit (`pkexec`) with a validated `/etc/shells` entry.
+    Polkit,
+    /// Executes directly as the current user (e.g. standalone `home-manager switch`).
+    None,
+}
 
 /// Configuration for running a NixOS / Home Manager system rebuild from NixApps.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RebuildCommand {
     /// Shell command executed to activate changes (e.g. `nixos-rebuild switch --flake /home/user/dotfiles#host`).
     pub command: String,
-    /// Run via `pkexec sh -c <command>` for graphical Polkit privilege escalation.
-    pub use_pkexec: bool,
+    /// Privilege elevation strategy.
+    pub elevation: ElevationMethod,
 }
 
 /// Outcome of a completed rebuild run.
@@ -24,7 +43,7 @@ pub struct RebuildOutcome {
     pub exit_code: Option<i32>,
 }
 
-/// Reads the local Linux hostname (from `/etc/hostname` or `hostname` env) if available.
+/// Reads the local Linux hostname (from `/etc/hostname` or `HOSTNAME` env) if available.
 pub fn detect_hostname() -> Option<String> {
     if let Ok(raw) = fs::read_to_string("/etc/hostname") {
         let host = raw.trim().to_string();
@@ -45,22 +64,20 @@ pub fn suggest_rebuild_command(config_dir: &Path, target: ConfigTarget) -> Rebui
 
     if has_flake {
         let host = detect_hostname().unwrap_or_else(|| "default".to_string());
-        // Most NixOS + Flakes setups (including integrated home-manager NixOS modules)
-        // activate via `nixos-rebuild switch --flake <dir>#<host>`.
         let command = format!("nixos-rebuild switch --flake '{dir_str}#{host}'");
         RebuildCommand {
             command,
-            use_pkexec: true,
+            elevation: ElevationMethod::BuiltInSudo,
         }
     } else {
         match target {
             ConfigTarget::HomeManager => RebuildCommand {
                 command: "home-manager switch".to_string(),
-                use_pkexec: false,
+                elevation: ElevationMethod::None,
             },
             ConfigTarget::NixosSystem => RebuildCommand {
                 command: "nixos-rebuild switch".to_string(),
-                use_pkexec: true,
+                elevation: ElevationMethod::BuiltInSudo,
             },
         }
     }
@@ -86,7 +103,14 @@ pub fn resolve_valid_pkexec_shell() -> String {
 }
 
 /// Executes `rebuild` and streams every combined stdout/stderr line to `on_line` in real time.
-pub fn run_rebuild_streaming<F>(rebuild: &RebuildCommand, mut on_line: F) -> Result<RebuildOutcome>
+///
+/// When `rebuild.elevation == ElevationMethod::BuiltInSudo`, `sudo_password` is written
+/// directly to `sudo -S`'s private stdin pipe and never printed or persisted.
+pub fn run_rebuild_streaming<F>(
+    rebuild: &RebuildCommand,
+    sudo_password: Option<&str>,
+    mut on_line: F,
+) -> Result<RebuildOutcome>
 where
     F: FnMut(String),
 {
@@ -97,28 +121,45 @@ where
         ));
     }
 
-    let mut cmd = if rebuild.use_pkexec {
-        // Ensure standard NixOS system binaries (`nixos-rebuild`, `nix`, `git`) are on PATH
-        // even after `pkexec` sanitizes the environment, and force `$SHELL` to an entry in `/etc/shells`.
-        let wrapped = format!(
-            "export PATH=\"/run/wrappers/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:$PATH\"; {trimmed}"
-        );
-        let mut c = Command::new("pkexec");
-        c.env("SHELL", resolve_valid_pkexec_shell());
-        c.args(["/bin/sh", "-c", &wrapped]);
-        c
-    } else {
-        let mut c = Command::new("sh");
-        c.args(["-c", trimmed]);
-        c
+    let wrapped = format!("export PATH=\"{NIXOS_SAFE_PATH}:$PATH\"; {trimmed}");
+
+    let (mut cmd, bin_name, feed_password) = match rebuild.elevation {
+        ElevationMethod::BuiltInSudo => {
+            let mut c = Command::new("sudo");
+            // `-S` reads password from stdin, `-k` ensures clean auth check, `-p ""` suppresses prompt noise.
+            c.args(["-S", "-p", "", "/bin/sh", "-c", &wrapped]);
+            c.stdin(Stdio::piped());
+            (c, "sudo", true)
+        }
+        ElevationMethod::Polkit => {
+            let mut c = Command::new("pkexec");
+            c.env("SHELL", resolve_valid_pkexec_shell());
+            // Detached stdin prevents pkexec from falling back to a terminal TTY prompt.
+            c.stdin(Stdio::null());
+            c.args(["/bin/sh", "-c", &wrapped]);
+            (c, "pkexec", false)
+        }
+        ElevationMethod::None => {
+            let mut c = Command::new("/bin/sh");
+            c.stdin(Stdio::null());
+            c.args(["-c", &wrapped]);
+            (c, "/bin/sh", false)
+        }
     };
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|source| NixAppsError::Io {
-        path: if rebuild.use_pkexec { "pkexec" } else { "sh" }.into(),
+        path: bin_name.into(),
         source,
     })?;
+
+    if feed_password && let Some(mut stdin) = child.stdin.take() {
+        let pw = sudo_password.unwrap_or_default();
+        let _ = writeln!(stdin, "{pw}");
+        let _ = stdin.flush();
+        // Dropping `stdin` closes the pipe cleanly after delivering the password.
+    }
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -180,7 +221,7 @@ mod tests {
         fs::write(dir.path().join("flake.nix"), "{}\n").unwrap();
 
         let cmd = suggest_rebuild_command(dir.path(), ConfigTarget::HomeManager);
-        assert!(cmd.use_pkexec);
+        assert_eq!(cmd.elevation, ElevationMethod::BuiltInSudo);
         assert!(cmd.command.starts_with("nixos-rebuild switch --flake "));
     }
 
@@ -188,11 +229,11 @@ mod tests {
     fn suggests_non_flake_commands_when_no_flake_present() {
         let dir = tempdir().unwrap();
         let hm = suggest_rebuild_command(dir.path(), ConfigTarget::HomeManager);
-        assert!(!hm.use_pkexec);
+        assert_eq!(hm.elevation, ElevationMethod::None);
         assert_eq!(hm.command, "home-manager switch");
 
         let sys = suggest_rebuild_command(dir.path(), ConfigTarget::NixosSystem);
-        assert!(sys.use_pkexec);
+        assert_eq!(sys.elevation, ElevationMethod::BuiltInSudo);
         assert_eq!(sys.command, "nixos-rebuild switch");
     }
 
@@ -200,10 +241,10 @@ mod tests {
     fn streaming_runner_captures_stdout_and_stderr() {
         let cmd = RebuildCommand {
             command: "echo hello-out && echo hello-err >&2".to_string(),
-            use_pkexec: false,
+            elevation: ElevationMethod::None,
         };
         let mut lines = Vec::new();
-        let outcome = run_rebuild_streaming(&cmd, |line| lines.push(line)).unwrap();
+        let outcome = run_rebuild_streaming(&cmd, None, |line| lines.push(line)).unwrap();
         assert!(outcome.success);
         assert!(lines.iter().any(|l| l == "hello-out"));
         assert!(lines.iter().any(|l| l == "hello-err"));

@@ -164,3 +164,15 @@ Deliver a functional, native Linux desktop GUI in **Rust + GTK4 + Libadwaita (Re
 - Added `resolve_valid_pkexec_shell()` in `crates/nixapps-core/src/rebuild.rs` to force `SHELL` to a valid entry from `/etc/shells` (preferring `/bin/sh`) when invoking `pkexec`.
 - Exported standard NixOS paths (`/run/wrappers/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin`) inside the `pkexec /bin/sh -c` wrapper so `nixos-rebuild`, `nix`, and `git` are always resolved after Polkit environment sanitization.
 - Added unit test `pkexec_shell_is_listed_in_etc_shells_when_present`.
+
+---
+
+## Entry #007 — 2026-11-26 — Built-in Password Popup, Adwaita Icons, NixOS Branding & About Dialog
+
+- **Phase:** Post-v1.0.0 UX Polish
+- **Participants:** Human Maintainer (Asaph) + AI Engineering Assistant (Google Antigravity)
+- **Status:** Completed
+
+### Real-World Issues Addressed
+1. **Password prompt fell back to terminal:** On minimal Wayland setups like Niri without a running `polkit-gnome-authentication-agent-1`, `pkexec` fell back to terminal prompts. Added a built-in native Libadwaita **Administrator Password Dialog** (`ElevationMethod::BuiltInSudo`) piping the password securely to `sudo -S` stdin without ever logging or storing it, while retaining Polkit (`pkexec`) and `None` as selectable options in Setup.
+2. **Missing button/symbolic icons & branding:** On systems without `adwaita-icon-theme` installed globally, GTK4 symbolic icons were missing, and `gtk::Button` `.label()` + `.icon_name()` overwrote each other. Bundled `adwaita-icon-theme`, `hicolor-icon-theme`, and `librsvg` in `flake.nix`, switched all buttons to `adw::ButtonContent`, added an embedded stylized **NixOS snowflake SVG** to the Setup hero, and added a branded **About NixApps** dialog with the embedded NixApps SVG logo.

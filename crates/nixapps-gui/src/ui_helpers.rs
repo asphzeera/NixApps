@@ -1,7 +1,12 @@
 use std::path::Path;
 
 use nixapps_core::{Category, InstallMode};
+use relm4::adw;
 use relm4::gtk;
+use relm4::gtk::prelude::ButtonExt;
+
+const NIXAPPS_LOGO_SVG: &[u8] = include_bytes!("../../../assets/io.github.nixapps.NixApps.svg");
+const NIXOS_SNOWFLAKE_SVG: &[u8] = include_bytes!("../../../assets/nixos-snowflake.svg");
 
 /// Subtle Libadwaita-harmonious CSS for store cards, category tiles, pill badges, and Nix code views.
 pub const APP_CSS: &str = r#"
@@ -72,6 +77,42 @@ pub const APP_CSS: &str = r#"
     padding: 10px;
 }
 "#;
+
+/// Builds a button with both an icon and a text label using `adw::ButtonContent`.
+///
+/// In GTK4, setting `.icon_name()` and `.label()` on `gtk::Button` directly makes them
+/// overwrite each other; `adw::ButtonContent` renders both cleanly side by side.
+pub fn icon_button(icon_name: &str, label: &str, css_classes: &[&str]) -> gtk::Button {
+    let content = adw::ButtonContent::builder()
+        .icon_name(icon_name)
+        .label(label)
+        .build();
+    gtk::Button::builder()
+        .child(&content)
+        .css_classes(css_classes.to_vec())
+        .build()
+}
+
+/// Updates an icon+label button created via [`icon_button`].
+pub fn set_icon_button(button: &gtk::Button, icon_name: &str, label: &str) {
+    let content = adw::ButtonContent::builder()
+        .icon_name(icon_name)
+        .label(label)
+        .build();
+    button.set_child(Some(&content));
+}
+
+/// Decodes the embedded NixApps SVG logo into a `gdk::Texture` for Setup & About dialogs.
+pub fn nixapps_logo_texture() -> Option<gtk::gdk::Texture> {
+    let bytes = gtk::glib::Bytes::from_static(NIXAPPS_LOGO_SVG);
+    gtk::gdk::Texture::from_bytes(&bytes).ok()
+}
+
+/// Decodes the embedded NixOS snowflake SVG into a `gdk::Texture` for the Setup hero.
+pub fn nixos_snowflake_texture() -> Option<gtk::gdk::Texture> {
+    let bytes = gtk::glib::Bytes::from_static(NIXOS_SNOWFLAKE_SVG);
+    gtk::gdk::Texture::from_bytes(&bytes).ok()
+}
 
 /// Maps a store [`Category`] to a standard freedesktop/GNOME symbolic icon name.
 pub fn category_icon_name(category: Category) -> &'static str {

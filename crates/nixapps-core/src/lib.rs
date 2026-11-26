@@ -40,7 +40,8 @@ pub use nix_module::{
     render_nix_module, validate_nix_syntax, write_nix_module,
 };
 pub use rebuild::{
-    RebuildCommand, RebuildOutcome, detect_hostname, run_rebuild_streaming, suggest_rebuild_command,
+    ElevationMethod, RebuildCommand, RebuildOutcome, detect_hostname, resolve_valid_pkexec_shell,
+    run_rebuild_streaming, suggest_rebuild_command,
 };
 pub use state::{load_or_init_state, load_state, save_state, validate_attr_path};
 pub use sync::{channel_packages_url, sync_channel, sync_from_json_reader};
