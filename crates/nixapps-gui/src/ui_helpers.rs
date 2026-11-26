@@ -113,6 +113,23 @@ pub const APP_CSS: &str = r#"
     background-color: alpha(@accent_bg_color, 0.26);
     border-color: alpha(@accent_color, 0.55);
 }
+
+.template-help-box {
+    background-color: mix(@window_bg_color, @window_fg_color, 0.12);
+    color: @window_fg_color;
+    border: 1px solid mix(@window_bg_color, @accent_color, 0.45);
+    border-radius: 10px;
+    padding: 10px 14px;
+    opacity: 1.0;
+}
+
+tooltip,
+tooltip.background {
+    background-color: mix(@window_bg_color, @window_fg_color, 0.14);
+    color: @window_fg_color;
+    border: 1px solid mix(@window_bg_color, @window_fg_color, 0.24);
+    opacity: 1.0;
+}
 "#;
 
 /// Builds a button with both an icon and a text label using `adw::ButtonContent`.

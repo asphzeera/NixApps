@@ -978,7 +978,7 @@ impl Component for NixAppsModel {
 
         // Catalog sync & API enrichment group
         let sync_group = adw::PreferencesGroup::builder()
-            .title("3. Package Catalog & Metadata Enrichment")
+            .title("3. Package Catalog &amp; Metadata Enrichment")
             .description("Sync official channels.nixos.org packages.json.br into SQLite FTS5. Optionally add a GitHub token to raise API limits for briefings.")
             .margin_top(16)
             .build();
@@ -1011,7 +1011,7 @@ impl Component for NixAppsModel {
         // System Rebuild Runner Configuration
         let rebuild_group = adw::PreferencesGroup::builder()
             .title("4. System Rebuild Command")
-            .description("Queue multiple app installs/removals, then click Apply & Rebuild to activate them on your NixOS system.")
+            .description("Queue multiple app installs/removals, then click Apply &amp; Rebuild to activate them on your NixOS system.")
             .margin_top(16)
             .build();
 
@@ -1181,7 +1181,9 @@ impl Component for NixAppsModel {
         // On-demand Dependencies Viewer
         let deps_group = adw::PreferencesGroup::builder()
             .title("Dependencies (On-Demand via Nix)")
-            .description("Evaluates real build & runtime inputs directly from your local Nixpkgs.")
+            .description(
+                "Evaluates real build &amp; runtime inputs directly from your local Nixpkgs.",
+            )
             .margin_top(18)
             .build();
 
@@ -1214,7 +1216,7 @@ impl Component for NixAppsModel {
         let custom_cfg_group = adw::PreferencesGroup::builder()
             .title("Declarative Configuration (Optional)")
             .description(
-                "Add custom Nix options, `programs.<name>` settings, or overrides for this application. Validated with `nix-instantiate --parse` before saving.",
+                "Add custom Nix options, `programs.&lt;name&gt;` settings, or overrides for this application. Validated with `nix-instantiate --parse` before saving.",
             )
             .margin_top(20)
             .build();
@@ -1230,39 +1232,96 @@ impl Component for NixAppsModel {
             .margin_bottom(6)
             .build();
 
+        // Opaque left-aligned hover help card shown directly under the template chips.
+        let template_help_label = gtk::Label::builder()
+            .halign(gtk::Align::Start)
+            .xalign(0.0)
+            .wrap(true)
+            .max_width_chars(68)
+            .css_classes(["caption"])
+            .build();
+        let template_help_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(8)
+            .halign(gtk::Align::Start)
+            .css_classes(["template-help-box"])
+            .margin_bottom(8)
+            .build();
+        let help_info_icon = gtk::Image::builder()
+            .icon_name("dialog-information-symbolic")
+            .pixel_size(16)
+            .valign(gtk::Align::Start)
+            .css_classes(["pending-pill-dot"])
+            .build();
+        template_help_box.append(&help_info_icon);
+        template_help_box.append(&template_help_label);
+
+        let template_help_revealer = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideDown)
+            .transition_duration(150)
+            .reveal_child(false)
+            .halign(gtk::Align::Start)
+            .child(&template_help_box)
+            .build();
+
         let tmpl_programs_btn = icon_button(
             "list-add-symbolic",
             "Insert programs.<name>.enable",
             &["template-chip"],
         );
-        tmpl_programs_btn.set_tooltip_text(Some(
-            "Inserts a NixOS / Home Manager module block (`programs.<name>.enable = true;`).\nUse this when the app offers built-in Nix configuration options (e.g. git, helix, firefox, steam) instead of only adding the binary.",
-        ));
         {
             let s = sender.clone();
             tmpl_programs_btn.connect_clicked(move |_| {
                 s.input(AppMsg::InsertNixTemplate("programs"));
             });
+            let motion = gtk::EventControllerMotion::new();
+            let rev_in = template_help_revealer.clone();
+            let lbl_in = template_help_label.clone();
+            motion.connect_enter(move |_, _, _| {
+                lbl_in.set_label(
+                    "Inserts `programs.<name>.enable = true;` — use this when the app offers built-in NixOS / Home Manager configuration options (e.g. git, helix, firefox, steam) instead of only adding the binary.",
+                );
+                rev_in.set_reveal_child(true);
+            });
+            let rev_out = template_help_revealer.clone();
+            motion.connect_leave(move |_| {
+                rev_out.set_reveal_child(false);
+            });
+            tmpl_programs_btn.add_controller(motion);
         }
+
         let tmpl_override_btn = icon_button(
             "list-add-symbolic",
             "Insert override template",
             &["template-chip"],
         );
-        tmpl_override_btn.set_tooltip_text(Some(
-            "Inserts a `pkgs.<name>.override { ... }` template.\nUse this when you need to pass custom build options, extra libraries, or plugins to a package (e.g. lutris, ffmpeg, vim).",
-        ));
         {
             let s = sender.clone();
             tmpl_override_btn.connect_clicked(move |_| {
                 s.input(AppMsg::InsertNixTemplate("override"));
             });
+            let motion = gtk::EventControllerMotion::new();
+            let rev_in = template_help_revealer.clone();
+            let lbl_in = template_help_label.clone();
+            motion.connect_enter(move |_, _, _| {
+                lbl_in.set_label(
+                    "Inserts a `pkgs.<name>.override { ... }` block — use this when you need to pass custom build options, extra libraries, or plugins to a package (e.g. lutris, ffmpeg, vim).",
+                );
+                rev_in.set_reveal_child(true);
+            });
+            let rev_out = template_help_revealer.clone();
+            motion.connect_leave(move |_| {
+                rev_out.set_reveal_child(false);
+            });
+            tmpl_override_btn.add_controller(motion);
         }
+
         let tmpl_row = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(8)
+            .halign(gtk::Align::Start)
             .margin_top(2)
-            .margin_bottom(8)
+            .margin_bottom(6)
             .build();
         tmpl_row.append(&tmpl_programs_btn);
         tmpl_row.append(&tmpl_override_btn);
@@ -1304,6 +1363,7 @@ impl Component for NixAppsModel {
             .build();
         custom_box.append(&detail_mode_dropdown);
         custom_box.append(&tmpl_row);
+        custom_box.append(&template_help_revealer);
         custom_box.append(&detail_nix_frame);
         custom_box.append(&detail_error_label);
         custom_box.append(&save_custom_btn);
@@ -3087,7 +3147,7 @@ fn populate_detail_view(model: &NixAppsModel, widgets: &AppWidgets) {
     }
     widgets
         .detail_meta_group
-        .set_description(Some(&meta_lines.join("\n")));
+        .set_description(Some(&gtk::glib::markup_escape_text(&meta_lines.join("\n"))));
 
     if let Some(managed) = model.managed_state.get_app(&pkg.attr_path) {
         let mode_idx = match managed.mode {
