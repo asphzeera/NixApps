@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed `pkexec` failing inside `nix develop` / Nix shells with `The value for the SHELL variable was not found in the /etc/shells file` by resolving a valid shell from `/etc/shells` and preserving standard NixOS system `PATH` entries during elevated rebuilds.
+
 ## [1.0.0] - 2026-11-25
 
 ### Added

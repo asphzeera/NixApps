@@ -66,6 +66,25 @@ pub fn suggest_rebuild_command(config_dir: &Path, target: ConfigTarget) -> Rebui
     }
 }
 
+/// Picks a shell path listed in `/etc/shells` so `pkexec` never rejects transient
+/// Nix devShell `$SHELL` values (e.g. `/nix/store/...-bash-interactive/bin/bash`).
+pub fn resolve_valid_pkexec_shell() -> String {
+    if let Ok(raw) = fs::read_to_string("/etc/shells") {
+        let valid: Vec<&str> = raw
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect();
+        if valid.contains(&"/bin/sh") {
+            return "/bin/sh".to_string();
+        }
+        if let Some(first) = valid.first() {
+            return (*first).to_string();
+        }
+    }
+    "/bin/sh".to_string()
+}
+
 /// Executes `rebuild` and streams every combined stdout/stderr line to `on_line` in real time.
 pub fn run_rebuild_streaming<F>(rebuild: &RebuildCommand, mut on_line: F) -> Result<RebuildOutcome>
 where
@@ -79,8 +98,14 @@ where
     }
 
     let mut cmd = if rebuild.use_pkexec {
+        // Ensure standard NixOS system binaries (`nixos-rebuild`, `nix`, `git`) are on PATH
+        // even after `pkexec` sanitizes the environment, and force `$SHELL` to an entry in `/etc/shells`.
+        let wrapped = format!(
+            "export PATH=\"/run/wrappers/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:$PATH\"; {trimmed}"
+        );
         let mut c = Command::new("pkexec");
-        c.args(["sh", "-c", trimmed]);
+        c.env("SHELL", resolve_valid_pkexec_shell());
+        c.args(["/bin/sh", "-c", &wrapped]);
         c
     } else {
         let mut c = Command::new("sh");
@@ -182,5 +207,15 @@ mod tests {
         assert!(outcome.success);
         assert!(lines.iter().any(|l| l == "hello-out"));
         assert!(lines.iter().any(|l| l == "hello-err"));
+    }
+
+    #[test]
+    fn pkexec_shell_is_listed_in_etc_shells_when_present() {
+        let chosen = resolve_valid_pkexec_shell();
+        assert!(!chosen.is_empty());
+        if let Ok(raw) = fs::read_to_string("/etc/shells") {
+            let listed = raw.lines().any(|line| line.trim() == chosen);
+            assert!(listed, "expected `{chosen}` to be listed in /etc/shells");
+        }
     }
 }

@@ -148,3 +148,19 @@ Deliver a functional, native Linux desktop GUI in **Rust + GTK4 + Libadwaita (Re
 
 ### Next Steps
 - Run `git commit`, tag `v1.0.0`, and push to `https://github.com/asphzeera/NixApps`.
+
+---
+
+## Entry #006 — 2026-11-26 — Hotfix: `pkexec` `$SHELL` & NixOS `PATH` Inside `nix develop`
+
+- **Phase:** Post-v1.0.0 Maintenance
+- **Participants:** Human Maintainer (Asaph) + AI Engineering Assistant (Google Antigravity)
+- **Status:** Completed
+
+### Issue Caught in Real-World Testing
+- Running **Apply & Rebuild** from inside `nix develop` caused `pkexec` to fail with `The value for the SHELL variable was not found in the /etc/shells file`, because `nix develop` sets `$SHELL` to the devShell's `/nix/store/...-bash-interactive/bin/bash` rather than a system shell listed in `/etc/shells`.
+
+### Fix Implemented
+- Added `resolve_valid_pkexec_shell()` in `crates/nixapps-core/src/rebuild.rs` to force `SHELL` to a valid entry from `/etc/shells` (preferring `/bin/sh`) when invoking `pkexec`.
+- Exported standard NixOS paths (`/run/wrappers/bin:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin`) inside the `pkexec /bin/sh -c` wrapper so `nixos-rebuild`, `nix`, and `git` are always resolved after Polkit environment sanitization.
+- Added unit test `pkexec_shell_is_listed_in_etc_shells_when_present`.
