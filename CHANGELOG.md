@@ -19,9 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved rebuild command auto-detection (`suggest_rebuild_command`) to distinguish standalone Home Manager flakes (`homeConfigurations`) from NixOS system flakes (`nixosConfigurations`).
 
 ### Fixed
-- Replaced the translucent native GTK tooltip on declarative Nix template chips with a 100% opaque, left-aligned hover help card (`GtkRevealer` + `EventControllerMotion`) and made global tooltips opaque.
+- Replaced the translucent native GTK tooltip on declarative Nix template chips with a 100% opaque, left-aligned floating `GtkPopover` (`EventControllerMotion`) so hovering never shifts layout or adds scrollbars, and made global tooltips opaque.
 - Escaped all Pango markup strings (`&amp;`, `&lt;`, `&gt;`, `markup_escape_text`) across `AdwPreferencesGroup` titles and descriptions to eliminate terminal `Gtk-WARNING` spam on startup.
-- Defaulted `GSK_RENDERER=ngl` in `flake.nix` (package wrapper and `devShell`) to avoid Vulkan `VK_SUBOPTIMAL_KHR` swapchain warnings on Wayland compositors like Niri.
+- Defaulted `GSK_RENDERER=gl` in `flake.nix` (package wrapper and `devShell`) to avoid Vulkan `VK_SUBOPTIMAL_KHR` and deprecated `ngl` warnings on GTK 4.24+ / Wayland compositors like Niri.
 - Made the generated `nixapps-managed.nix` module **auto-adaptive** (`config = lib.mkMerge` guarded by `options ? home && options.home ? packages` and `options ? environment && options.environment ? systemPackages`), preventing `option 'home-manager.users.<user>.environment' does not exist` errors regardless of whether the file is imported in `home.nix` or `configuration.nix`.
 - Replaced the nested-scroll `AdwStatusPage` in the Setup tab with a clean, non-scrollable responsive header box so the NixOS snowflake logo and description are never clipped or obstructed.
 - Upgraded all action buttons (Install, Remove/Uninstall, Apply & Rebuild, Review Diff, Homepage, Copy, Sync, Inspect Dependencies) to use `adw::ButtonContent` so icons and labels render side by side in GTK4.

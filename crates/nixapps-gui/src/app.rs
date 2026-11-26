@@ -1232,62 +1232,76 @@ impl Component for NixAppsModel {
             .margin_bottom(6)
             .build();
 
-        // Opaque left-aligned hover help card shown directly under the template chips.
-        let template_help_label = gtk::Label::builder()
-            .halign(gtk::Align::Start)
-            .xalign(0.0)
-            .wrap(true)
-            .max_width_chars(68)
-            .css_classes(["caption"])
-            .build();
-        let template_help_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(8)
-            .halign(gtk::Align::Start)
-            .css_classes(["template-help-box"])
-            .margin_bottom(8)
-            .build();
-        let help_info_icon = gtk::Image::builder()
-            .icon_name("dialog-information-symbolic")
-            .pixel_size(16)
-            .valign(gtk::Align::Start)
-            .css_classes(["pending-pill-dot"])
-            .build();
-        template_help_box.append(&help_info_icon);
-        template_help_box.append(&template_help_label);
+        let make_hover_popover = |parent: &gtk::Button, help_text: &str| {
+            let lbl = gtk::Label::builder()
+                .label(help_text)
+                .halign(gtk::Align::Start)
+                .xalign(0.0)
+                .wrap(true)
+                .max_width_chars(46)
+                .css_classes(["caption"])
+                .build();
 
-        let template_help_revealer = gtk::Revealer::builder()
-            .transition_type(gtk::RevealerTransitionType::SlideDown)
-            .transition_duration(150)
-            .reveal_child(false)
-            .halign(gtk::Align::Start)
-            .child(&template_help_box)
-            .build();
+            let row = gtk::Box::builder()
+                .orientation(gtk::Orientation::Horizontal)
+                .spacing(8)
+                .build();
+            let icon = gtk::Image::builder()
+                .icon_name("dialog-information-symbolic")
+                .pixel_size(16)
+                .valign(gtk::Align::Start)
+                .css_classes(["pending-pill-dot"])
+                .build();
+            row.append(&icon);
+            row.append(&lbl);
+
+            let pop = gtk::Popover::builder()
+                .child(&row)
+                .autohide(false)
+                .has_arrow(false)
+                .can_focus(false)
+                .position(gtk::PositionType::Bottom)
+                .halign(gtk::Align::Start)
+                .css_classes(["template-help-popover"])
+                .build();
+            pop.set_parent(parent);
+            // Align popover's left edge directly with the chip's left edge.
+            pop.set_pointing_to(Some(&gtk::gdk::Rectangle::new(0, 0, 1, 1)));
+            pop.set_offset(0, 6);
+
+            let motion = gtk::EventControllerMotion::new();
+            let pop_in = pop.clone();
+            motion.connect_enter(move |_, _, _| {
+                pop_in.popup();
+            });
+            let pop_out = pop.clone();
+            motion.connect_leave(move |_| {
+                pop_out.popdown();
+            });
+            parent.add_controller(motion);
+            let pop_destroy = pop.clone();
+            parent.connect_destroy(move |_| {
+                pop_destroy.unparent();
+            });
+            pop
+        };
 
         let tmpl_programs_btn = icon_button(
             "list-add-symbolic",
             "Insert programs.<name>.enable",
             &["template-chip"],
         );
+        let programs_popover = make_hover_popover(
+            &tmpl_programs_btn,
+            "Inserts `programs.<name>.enable = true;` — use this when the app offers built-in NixOS / Home Manager configuration options (e.g. git, helix, firefox, steam) instead of only adding the binary.",
+        );
         {
             let s = sender.clone();
+            let pop = programs_popover.clone();
             tmpl_programs_btn.connect_clicked(move |_| {
+                pop.popdown();
                 s.input(AppMsg::InsertNixTemplate("programs"));
             });
-            let motion = gtk::EventControllerMotion::new();
-            let rev_in = template_help_revealer.clone();
-            let lbl_in = template_help_label.clone();
-            motion.connect_enter(move |_, _, _| {
-                lbl_in.set_label(
-                    "Inserts `programs.<name>.enable = true;` — use this when the app offers built-in NixOS / Home Manager configuration options (e.g. git, helix, firefox, steam) instead of only adding the binary.",
-                );
-                rev_in.set_reveal_child(true);
-            });
-            let rev_out = template_help_revealer.clone();
-            motion.connect_leave(move |_| {
-                rev_out.set_reveal_child(false);
-            });
-            tmpl_programs_btn.add_controller(motion);
         }
 
         let tmpl_override_btn = icon_button(
@@ -1295,25 +1309,17 @@ impl Component for NixAppsModel {
             "Insert override template",
             &["template-chip"],
         );
+        let override_popover = make_hover_popover(
+            &tmpl_override_btn,
+            "Inserts a `pkgs.<name>.override { ... }` block — use this when you need to pass custom build options, extra libraries, or plugins to a package (e.g. lutris, ffmpeg, vim).",
+        );
         {
             let s = sender.clone();
+            let pop = override_popover.clone();
             tmpl_override_btn.connect_clicked(move |_| {
+                pop.popdown();
                 s.input(AppMsg::InsertNixTemplate("override"));
             });
-            let motion = gtk::EventControllerMotion::new();
-            let rev_in = template_help_revealer.clone();
-            let lbl_in = template_help_label.clone();
-            motion.connect_enter(move |_, _, _| {
-                lbl_in.set_label(
-                    "Inserts a `pkgs.<name>.override { ... }` block — use this when you need to pass custom build options, extra libraries, or plugins to a package (e.g. lutris, ffmpeg, vim).",
-                );
-                rev_in.set_reveal_child(true);
-            });
-            let rev_out = template_help_revealer.clone();
-            motion.connect_leave(move |_| {
-                rev_out.set_reveal_child(false);
-            });
-            tmpl_override_btn.add_controller(motion);
         }
 
         let tmpl_row = gtk::Box::builder()
@@ -1321,7 +1327,7 @@ impl Component for NixAppsModel {
             .spacing(8)
             .halign(gtk::Align::Start)
             .margin_top(2)
-            .margin_bottom(6)
+            .margin_bottom(8)
             .build();
         tmpl_row.append(&tmpl_programs_btn);
         tmpl_row.append(&tmpl_override_btn);
@@ -1363,7 +1369,6 @@ impl Component for NixAppsModel {
             .build();
         custom_box.append(&detail_mode_dropdown);
         custom_box.append(&tmpl_row);
-        custom_box.append(&template_help_revealer);
         custom_box.append(&detail_nix_frame);
         custom_box.append(&detail_error_label);
         custom_box.append(&save_custom_btn);

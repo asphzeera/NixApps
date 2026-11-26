@@ -62,7 +62,7 @@
 
           preFixup = ''
             gappsWrapperArgs+=(
-              --set-default GSK_RENDERER ngl
+              --set-default GSK_RENDERER gl
             )
           '';
 
@@ -109,7 +109,7 @@
           shellHook = ''
             export XDG_DATA_DIRS="${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:${pkgs.gtk4}/share:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
             export GDK_PIXBUF_MODULE_FILE="${pkgs.librsvg}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
-            export GSK_RENDERER="''${GSK_RENDERER:-ngl}"
+            export GSK_RENDERER="''${GSK_RENDERER:-gl}"
             echo "NixApps devShell loaded (Rust $(rustc --version | cut -d' ' -f2) + GTK4/Libadwaita + Adwaita Icons)"
           '';
         };
