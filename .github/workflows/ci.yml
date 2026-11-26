@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  check:
+    name: Nix DevShell + Cargo Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Setup Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Check Nix flake evaluation
+        run: nix flake show
+
+      - name: Run Rust formatting, clippy, and tests inside devShell
+        run: |
+          nix develop --command bash -euo pipefail -c '
+            cargo fmt --all -- --check
+            cargo clippy --workspace --all-targets -- -D warnings
+            cargo test --workspace
+          '

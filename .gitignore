@@ -1,0 +1,23 @@
+# Rust / Cargo
+/target
+**/*.rs.bk
+*.pdb
+
+# Nix
+result
+result-*
+.direnv/
+
+# Local databases / caches / dev config
+*.db
+*.db-shm
+*.db-wal
+.nixapps-dev/
+
+# Editors & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store

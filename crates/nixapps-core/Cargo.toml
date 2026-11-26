@@ -1,0 +1,17 @@
+[package]
+name = "nixapps-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core engine for NixApps: package indexing, metadata enrichment, and declarative Nix module generation"
+
+[dependencies]
+brotli = "7"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["modern_sqlite"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+similar = "2"
+tempfile = "3"
+thiserror = "2"

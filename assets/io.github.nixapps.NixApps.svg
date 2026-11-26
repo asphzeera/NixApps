@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5277C3"/>
+      <stop offset="100%" stop-color="#7EBAE4"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
+  <!-- Store bag handle -->
+  <path d="M44 46 C44 30, 84 30, 84 46" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>
+  <!-- Store bag body -->
+  <rect x="28" y="44" width="72" height="58" rx="12" fill="#FFFFFF" fill-opacity="0.18" stroke="#FFFFFF" stroke-width="5"/>
+  <!-- Stylized Nix hexagon snowflake center -->
+  <g transform="translate(64, 73)" stroke="#FFFFFF" stroke-width="5.5" stroke-linecap="round">
+    <line x1="0" y1="-17" x2="0" y2="17"/>
+    <line x1="-14.7" y1="-8.5" x2="14.7" y2="8.5"/>
+    <line x1="-14.7" y1="8.5" x2="14.7" y2="-8.5"/>
+    <circle cx="0" cy="0" r="4.5" fill="#5277C3" stroke="#FFFFFF" stroke-width="3.5"/>
+  </g>
+</svg>

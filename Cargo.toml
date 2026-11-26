@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nixapps-core",
+    "crates/nixapps-gui",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/asphzeera/NixApps"
+description = "A declarative native app store for NixOS and Home Manager"
+keywords = ["nixos", "nix", "home-manager", "gtk4", "app-store"]
+categories = ["gui", "os::linux-apis"]

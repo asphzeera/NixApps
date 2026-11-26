@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=NixApps
+GenericName=Declarative App Store
+Comment=Native declarative App Store for NixOS and Home Manager
+Exec=nixapps
+Icon=io.github.nixapps.NixApps
+Terminal=false
+Type=Application
+Categories=System;PackageManager;GTK;
+Keywords=nix;nixos;home-manager;store;packages;apps;flakes;
+StartupNotify=true
+StartupWMClass=io.github.nixapps.NixApps
