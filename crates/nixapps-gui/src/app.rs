@@ -131,6 +131,8 @@ pub struct AppWidgets {
     back_button: gtk::Button,
     sync_button: gtk::Button,
     status_banner: adw::Banner,
+    pending_pill_revealer: gtk::Revealer,
+    pending_pill_label: gtk::Label,
     root_stack: gtk::Stack,
     view_stack: adw::ViewStack,
 
@@ -820,18 +822,54 @@ impl Component for NixAppsModel {
             "folder-download-symbolic",
         );
 
-        // --- TAB 3: ONBOARDING & SETUP (with official NixOS Snowflake Hero!) ---
-        let setup_hero = adw::StatusPage::builder()
-            .title("Declarative NixOS Setup")
-            .description(
-                "NixApps never edits your hand-written dotfiles. Choose your configuration folder, and NixApps will manage a single dedicated .nix module that you import once.",
-            )
+        // --- TAB 3: ONBOARDING & SETUP (clean responsive header with large NixOS snowflake) ---
+        let setup_hero = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(10)
+            .halign(gtk::Align::Center)
+            .margin_top(20)
+            .margin_bottom(18)
             .build();
+
         if let Some(tex) = nixos_snowflake_texture() {
-            setup_hero.set_paintable(Some(&tex));
+            let setup_logo = gtk::Picture::builder()
+                .paintable(&tex)
+                .content_fit(gtk::ContentFit::Contain)
+                .width_request(192)
+                .height_request(192)
+                .halign(gtk::Align::Center)
+                .build();
+            setup_hero.append(&setup_logo);
         } else {
-            setup_hero.set_icon_name(Some("preferences-system-symbolic"));
+            let setup_logo = gtk::Image::builder()
+                .icon_name("preferences-system-symbolic")
+                .pixel_size(160)
+                .halign(gtk::Align::Center)
+                .build();
+            setup_hero.append(&setup_logo);
         }
+
+        let setup_title = gtk::Label::builder()
+            .label("Declarative NixOS Setup")
+            .css_classes(["title-1"])
+            .halign(gtk::Align::Center)
+            .justify(gtk::Justification::Center)
+            .wrap(true)
+            .build();
+
+        let setup_desc = gtk::Label::builder()
+            .label(
+                "NixApps never edits your hand-written dotfiles. Choose your configuration folder, and NixApps will manage a single dedicated .nix module that auto-adapts to Home Manager or NixOS.",
+            )
+            .css_classes(["dim-label"])
+            .halign(gtk::Align::Center)
+            .justify(gtk::Justification::Center)
+            .wrap(true)
+            .max_width_chars(64)
+            .build();
+
+        setup_hero.append(&setup_title);
+        setup_hero.append(&setup_desc);
 
         let config_group = adw::PreferencesGroup::builder()
             .title("1. Configuration Binding")
@@ -1190,16 +1228,25 @@ impl Component for NixAppsModel {
         let tmpl_programs_btn = icon_button(
             "list-add-symbolic",
             "Insert programs.<name>.enable",
-            &["flat"],
+            &["template-chip"],
         );
+        tmpl_programs_btn.set_tooltip_text(Some(
+            "Inserts a NixOS / Home Manager module block (`programs.<name>.enable = true;`).\nUse this when the app offers built-in Nix configuration options (e.g. git, helix, firefox, steam) instead of only adding the binary.",
+        ));
         {
             let s = sender.clone();
             tmpl_programs_btn.connect_clicked(move |_| {
                 s.input(AppMsg::InsertNixTemplate("programs"));
             });
         }
-        let tmpl_override_btn =
-            icon_button("list-add-symbolic", "Insert override template", &["flat"]);
+        let tmpl_override_btn = icon_button(
+            "list-add-symbolic",
+            "Insert override template",
+            &["template-chip"],
+        );
+        tmpl_override_btn.set_tooltip_text(Some(
+            "Inserts a `pkgs.<name>.override { ... }` template.\nUse this when you need to pass custom build options, extra libraries, or plugins to a package (e.g. lutris, ffmpeg, vim).",
+        ));
         {
             let s = sender.clone();
             tmpl_override_btn.connect_clicked(move |_| {
@@ -1208,8 +1255,9 @@ impl Component for NixAppsModel {
         }
         let tmpl_row = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
-            .spacing(6)
-            .margin_bottom(6)
+            .spacing(8)
+            .margin_top(2)
+            .margin_bottom(8)
             .build();
         tmpl_row.append(&tmpl_programs_btn);
         tmpl_row.append(&tmpl_override_btn);
@@ -1443,14 +1491,61 @@ impl Component for NixAppsModel {
         rebuild_tv.set_content(Some(&rebuild_body));
         rebuild_dialog.set_child(Some(&rebuild_tv));
 
+        // --- Floating Bottom-Right Pending Changes Pill (nested pill design) ---
+        let pending_pill_icon = gtk::Image::builder()
+            .icon_name("software-update-available-symbolic")
+            .pixel_size(16)
+            .css_classes(["pending-pill-dot"])
+            .build();
+
+        let pending_pill_label = gtk::Label::builder()
+            .label("Pending changes")
+            .css_classes(["heading"])
+            .build();
+
+        let pending_pill_btn = icon_button(
+            "emblem-synchronizing-symbolic",
+            "Apply & Rebuild",
+            &["suggested-action", "pill"],
+        );
+        {
+            let s = sender.clone();
+            pending_pill_btn.connect_clicked(move |_| s.input(AppMsg::OpenRebuildDialog));
+        }
+
+        let pending_pill_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(10)
+            .valign(gtk::Align::Center)
+            .css_classes(["pending-pill"])
+            .build();
+        pending_pill_box.append(&pending_pill_icon);
+        pending_pill_box.append(&pending_pill_label);
+        pending_pill_box.append(&pending_pill_btn);
+
+        let pending_pill_revealer = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideUp)
+            .transition_duration(200)
+            .reveal_child(false)
+            .halign(gtk::Align::End)
+            .valign(gtk::Align::End)
+            .margin_end(20)
+            .margin_bottom(20)
+            .child(&pending_pill_box)
+            .build();
+
         // --- Window assembly ---
         let main_vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
         main_vbox.append(&status_banner);
         main_vbox.append(&root_stack);
 
+        let content_overlay = gtk::Overlay::new();
+        content_overlay.set_child(Some(&main_vbox));
+        content_overlay.add_overlay(&pending_pill_revealer);
+
         let toolbar_view = adw::ToolbarView::new();
         toolbar_view.add_top_bar(&header);
-        toolbar_view.set_content(Some(&main_vbox));
+        toolbar_view.set_content(Some(&content_overlay));
 
         let toast_overlay = adw::ToastOverlay::new();
         toast_overlay.set_child(Some(&toolbar_view));
@@ -1462,6 +1557,8 @@ impl Component for NixAppsModel {
             back_button,
             sync_button,
             status_banner,
+            pending_pill_revealer,
+            pending_pill_label,
             root_stack,
             view_stack,
             search_entry,
@@ -1869,13 +1966,22 @@ impl Component for NixAppsModel {
                 widgets.rebuild_run_btn.set_sensitive(true);
                 match result {
                     Ok(outcome) if outcome.success => {
+                        let applied_count = self.pending_changes;
                         self.pending_changes = 0;
                         self.last_git_warning = None;
                         self.baseline_nix =
                             render_nix_module(&self.managed_state).unwrap_or_default();
                         self.rebuild_status =
                             "Rebuild succeeded! Your applications are now active.".into();
-                        toast_msg = Some("Rebuild succeeded! Changes are now live.".into());
+                        widgets.rebuild_status_label.remove_css_class("error");
+                        widgets.rebuild_status_label.add_css_class("success");
+                        widgets.rebuild_dialog.close();
+                        show_rebuild_success_dialog(
+                            &widgets.window,
+                            applied_count,
+                            self.managed_state.apps.len(),
+                            &sender,
+                        );
                     }
                     Ok(outcome) => {
                         let code = outcome
@@ -1884,10 +1990,14 @@ impl Component for NixAppsModel {
                             .unwrap_or_else(|| "unknown".into());
                         self.rebuild_status =
                             format!("Rebuild failed (exit code {code}). Check log above.");
+                        widgets.rebuild_status_label.remove_css_class("success");
+                        widgets.rebuild_status_label.add_css_class("error");
                         toast_msg = Some(format!("Rebuild failed (exit code {code})"));
                     }
                     Err(err) => {
                         self.rebuild_status = format!("Failed to launch rebuild: {err}");
+                        widgets.rebuild_status_label.remove_css_class("success");
+                        widgets.rebuild_status_label.add_css_class("error");
                         toast_msg = Some(format!("Rebuild error: {err}"));
                     }
                 }
@@ -2279,6 +2389,103 @@ fn show_diff_dialog(parent: &adw::ApplicationWindow, diff_text: &str) {
     dialog.present(Some(parent));
 }
 
+/// Shows a celebratory confirmation popup after a NixOS / Home Manager rebuild finishes cleanly.
+fn show_rebuild_success_dialog(
+    parent: &adw::ApplicationWindow,
+    applied_changes: usize,
+    total_managed: usize,
+    sender: &ComponentSender<NixAppsModel>,
+) {
+    let dialog = adw::Dialog::builder()
+        .title("System Updated")
+        .content_width(420)
+        .build();
+
+    let ok_icon = gtk::Image::builder()
+        .icon_name("emblem-ok-symbolic")
+        .pixel_size(64)
+        .css_classes(["success"])
+        .margin_top(10)
+        .build();
+
+    let heading = gtk::Label::builder()
+        .label("System Updated Successfully!")
+        .css_classes(["title-2"])
+        .justify(gtk::Justification::Center)
+        .wrap(true)
+        .build();
+
+    let detail_text = if applied_changes > 0 {
+        let plural = if applied_changes == 1 {
+            "change"
+        } else {
+            "changes"
+        };
+        format!(
+            "{applied_changes} declarative {plural} activated. Your NixApps module now manages {total_managed} application(s) and everything is ready to use."
+        )
+    } else {
+        format!(
+            "Your NixOS configuration rebuilt cleanly ({total_managed} managed application(s) active)."
+        )
+    };
+
+    let desc = gtk::Label::builder()
+        .label(&detail_text)
+        .css_classes(["dim-label"])
+        .wrap(true)
+        .justify(gtk::Justification::Center)
+        .build();
+
+    let view_log_btn = icon_button("utilities-terminal-symbolic", "View Log", &[]);
+    let done_btn = icon_button("emblem-ok-symbolic", "Done", &["suggested-action", "pill"]);
+
+    let btn_row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(10)
+        .halign(gtk::Align::Center)
+        .margin_top(12)
+        .build();
+    btn_row.append(&view_log_btn);
+    btn_row.append(&done_btn);
+
+    let body = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(10)
+        .margin_top(10)
+        .margin_bottom(22)
+        .margin_start(22)
+        .margin_end(22)
+        .build();
+    body.append(&ok_icon);
+    body.append(&heading);
+    body.append(&desc);
+    body.append(&btn_row);
+
+    let tv = adw::ToolbarView::new();
+    tv.add_top_bar(&adw::HeaderBar::new());
+    tv.set_content(Some(&body));
+    dialog.set_child(Some(&tv));
+
+    {
+        let dlg = dialog.clone();
+        done_btn.connect_clicked(move |_| {
+            dlg.close();
+        });
+    }
+    {
+        let dlg = dialog.clone();
+        let s = sender.clone();
+        view_log_btn.connect_clicked(move |_| {
+            dlg.close();
+            s.input(AppMsg::OpenRebuildDialog);
+        });
+    }
+
+    dialog.present(Some(parent));
+    done_btn.grab_focus();
+}
+
 /// Synchronizes all visible widgets with the latest `NixAppsModel`.
 fn refresh_all_views(
     model: &NixAppsModel,
@@ -2302,26 +2509,23 @@ fn refresh_all_views(
         widgets.status_banner.set_revealed(true);
     } else if let Some(warn) = &model.last_git_warning {
         widgets.status_banner.set_title(warn);
-        widgets
-            .status_banner
-            .set_button_label(Some("Apply & Rebuild"));
-        widgets.status_banner.set_revealed(true);
-    } else if model.pending_changes > 0 {
-        let plural = if model.pending_changes == 1 {
-            "change"
-        } else {
-            "changes"
-        };
-        widgets.status_banner.set_title(&format!(
-            "{} pending {plural} written to your managed module — ready to activate.",
-            model.pending_changes
-        ));
-        widgets
-            .status_banner
-            .set_button_label(Some("Apply & Rebuild"));
+        widgets.status_banner.set_button_label(None);
         widgets.status_banner.set_revealed(true);
     } else {
         widgets.status_banner.set_revealed(false);
+    }
+
+    // Floating nested pill in bottom-right corner for queued changes ready to rebuild.
+    if model.pending_changes > 0 && model.settings.is_configured() {
+        let label = if model.pending_changes == 1 {
+            "1 pending change".to_string()
+        } else {
+            format!("{} pending changes", model.pending_changes)
+        };
+        widgets.pending_pill_label.set_label(&label);
+        widgets.pending_pill_revealer.set_reveal_child(true);
+    } else {
+        widgets.pending_pill_revealer.set_reveal_child(false);
     }
 
     if widgets.unfree_switch.is_active() != model.settings.include_unfree {

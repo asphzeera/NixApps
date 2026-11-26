@@ -74,6 +74,11 @@ fn indent_block(block: &str, spaces: usize) -> String {
 }
 
 /// Deterministically renders a complete Nix module from `ManagedState`.
+///
+/// The generated module uses `config = lib.mkMerge` with `options ? home` and
+/// `options ? environment` guards so it works safely whether imported in
+/// **Home Manager** (`home.nix`) or **NixOS System** (`configuration.nix`),
+/// preventing `option 'environment' does not exist` or `option 'home' does not exist` errors.
 pub fn render_nix_module(state: &ManagedState) -> Result<String> {
     let mut standard_pkgs: Vec<&str> = Vec::new();
     let mut custom_blocks: Vec<(&str, &str)> = Vec::new();
@@ -115,13 +120,16 @@ pub fn render_nix_module(state: &ManagedState) -> Result<String> {
         state.target.display_name(),
         state.channel
     ));
-    out.push_str("{ pkgs, lib, ... }:\n{\n");
+    out.push_str(
+        "# Auto-adapts to both Home Manager (`home.packages`) and NixOS (`environment.systemPackages`).\n",
+    );
+    out.push_str("{ pkgs, lib, options, ... }:\n");
+    out.push_str("let\n");
 
-    let pkgs_attr = state.target.packages_attr();
     if standard_pkgs.is_empty() {
-        out.push_str(&format!("  {pkgs_attr} = [ ];\n"));
+        out.push_str("  managedPackages = [ ];\n");
     } else {
-        out.push_str(&format!("  {pkgs_attr} = with pkgs; [\n"));
+        out.push_str("  managedPackages = with pkgs; [\n");
         for pkg in &standard_pkgs {
             let expr = format_nix_attr_expr(pkg);
             out.push_str(&format!("    {expr}\n"));
@@ -129,20 +137,32 @@ pub fn render_nix_module(state: &ManagedState) -> Result<String> {
         out.push_str("  ];\n");
     }
 
+    out.push_str("in\n{\n");
+    out.push_str("  config = lib.mkMerge [\n");
+    out.push_str("    (lib.optionalAttrs (options ? home && options.home ? packages) {\n");
+    out.push_str("      home.packages = managedPackages;\n");
+    out.push_str("    })\n");
+    out.push_str(
+        "    (lib.optionalAttrs (options ? environment && options.environment ? systemPackages) {\n",
+    );
+    out.push_str("      environment.systemPackages = managedPackages;\n");
+    out.push_str("    })\n");
+
     if !custom_blocks.is_empty() {
-        out.push('\n');
-        out.push_str("  # --- Custom per-application configurations ---\n");
+        out.push_str("    {\n");
+        out.push_str("      # --- Custom per-application configurations ---\n");
         for (attr, snippet) in custom_blocks {
-            out.push_str(&format!("  # [nixapps:{attr}]\n"));
-            out.push_str(&indent_block(snippet, 2));
+            out.push_str(&format!("      # [nixapps:{attr}]\n"));
+            out.push_str(&indent_block(snippet, 6));
             out.push_str("\n\n");
         }
-        // Trim one trailing extra blank line before closing brace.
         if out.ends_with("\n\n") {
             out.pop();
         }
+        out.push_str("    }\n");
     }
 
+    out.push_str("  ];\n");
     out.push_str("}\n");
     Ok(out)
 }
@@ -296,16 +316,19 @@ mod tests {
         let hm_path = dir.path().join("nixapps-home.nix");
         let rendered = write_nix_module(&hm_path, &hm, &WriteOptions::default()).unwrap();
 
-        assert!(rendered.contains("home.packages = with pkgs; ["));
+        assert!(rendered.contains("managedPackages = with pkgs; ["));
         assert!(rendered.contains("    obsidian\n    spotify"));
-        assert!(rendered.contains("  programs.helix = {"));
+        assert!(rendered.contains("options ? home && options.home ? packages"));
+        assert!(rendered.contains("options ? environment && options.environment ? systemPackages"));
+        assert!(rendered.contains("      programs.helix = {"));
         assert!(is_managed_nix_file(&hm_path).unwrap());
 
         let mut sys = ManagedState::new(ConfigTarget::NixosSystem, "nixos-26.05");
         sys.install_package("btop").unwrap();
         let sys_path = dir.path().join("nixapps-system.nix");
         let sys_rendered = write_nix_module(&sys_path, &sys, &WriteOptions::default()).unwrap();
-        assert!(sys_rendered.contains("environment.systemPackages = with pkgs; ["));
+        assert!(sys_rendered.contains("environment.systemPackages = managedPackages;"));
+        assert!(sys_rendered.contains("home.packages = managedPackages;"));
     }
 
     #[test]

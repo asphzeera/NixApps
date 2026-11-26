@@ -176,3 +176,29 @@ Deliver a functional, native Linux desktop GUI in **Rust + GTK4 + Libadwaita (Re
 ### Real-World Issues Addressed
 1. **Password prompt fell back to terminal:** On minimal Wayland setups like Niri without a running `polkit-gnome-authentication-agent-1`, `pkexec` fell back to terminal prompts. Added a built-in native Libadwaita **Administrator Password Dialog** (`ElevationMethod::BuiltInSudo`) piping the password securely to `sudo -S` stdin without ever logging or storing it, while retaining Polkit (`pkexec`) and `None` as selectable options in Setup.
 2. **Missing button/symbolic icons & branding:** On systems without `adwaita-icon-theme` installed globally, GTK4 symbolic icons were missing, and `gtk::Button` `.label()` + `.icon_name()` overwrote each other. Bundled `adwaita-icon-theme`, `hicolor-icon-theme`, and `librsvg` in `flake.nix`, switched all buttons to `adw::ButtonContent`, added an embedded stylized **NixOS snowflake SVG** to the Setup hero, and added a branded **About NixApps** dialog with the embedded NixApps SVG logo.
+
+---
+
+## Entry #008 — 2026-11-26 — Auto-Adaptive Nix Module & Responsive Setup Hero Fix
+
+- **Phase:** Post-v1.0.0 Reliability & UX Polish
+- **Participants:** Human Maintainer (Asaph) + AI Engineering Assistant (Google Antigravity)
+- **Status:** Completed
+
+### Real-World Issues Addressed
+1. **Home Manager vs NixOS option mismatch (`home-manager.users.<user>.environment does not exist`):** Importing `nixapps-managed.nix` into `home.nix` while the target was set to NixOS System caused rebuild evaluation errors. Fixed permanently in `render_nix_module` by emitting an **auto-adaptive module** using `config = lib.mkMerge` with `options ? home && options.home ? packages` and `options ? environment && options.environment ? systemPackages` guards — verified against `lib.evalModules` for both NixOS and Home Manager.
+2. **Clipped Setup Hero & Nested Scrollbar:** `adw::StatusPage` embeds its own `GtkScrolledWindow`, causing it to collapse and clip the NixOS logo when placed inside the Setup tab's `GtkScrolledWindow`. Replaced it with a clean, non-scrollable responsive `gtk::Box` header so the NixOS snowflake logo, title, and description display cleanly at any window size.
+
+---
+
+## Entry #009 — 2026-11-26 — Floating Pending Pill, Large Setup Logo, Template Chips & Standalone Flake Auto-Detect
+
+- **Phase:** Post-v1.0.0 UX Polish
+- **Participants:** Human Maintainer (Asaph) + AI Engineering Assistant (Google Antigravity)
+- **Status:** Completed
+
+### Changes Implemented
+1. **Scaled Setup Hero Logo:** Upgraded the NixOS snowflake logo in Setup from 80px `GtkImage` to a crisp 192×192 vector `GtkPicture`.
+2. **Floating Bottom-Right Nested Pill:** Replaced the full-width top pending-changes banner with a floating `GtkOverlay` + `GtkRevealer` nested pill in the bottom-right corner (`N pending changes` + inner `Apply & Rebuild` pill button).
+3. **Styled Declarative Template Chips + Hover Tooltips:** Replaced flat text-like buttons for `Insert programs.<name>.enable` and `Insert override template` with accent-colored `.template-chip` pills with descriptive hover tooltips explaining when to use each option.
+4. **Improved Universal Rebuild Auto-Detection:** Enhanced `suggest_rebuild_command` in `nixapps-core/src/rebuild.rs` to inspect `flake.nix` for `homeConfigurations` vs `nixosConfigurations`, avoiding suggesting `nixos-rebuild` on standalone Home Manager Flake setups (e.g. non-NixOS Linux or standalone HM configs). Added dedicated unit test.

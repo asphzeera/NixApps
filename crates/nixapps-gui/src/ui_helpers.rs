@@ -76,6 +76,33 @@ pub const APP_CSS: &str = r#"
     border-radius: 18px;
     padding: 10px;
 }
+
+.pending-pill {
+    background-color: @popover_bg_color;
+    border: 1px solid alpha(@accent_color, 0.35);
+    border-radius: 999px;
+    padding: 6px 8px 6px 16px;
+    box-shadow: 0 6px 20px alpha(#000000, 0.28);
+}
+
+.pending-pill-dot {
+    color: @accent_color;
+}
+
+.template-chip {
+    background-color: alpha(@accent_bg_color, 0.14);
+    color: @accent_color;
+    border: 1px solid alpha(@accent_color, 0.30);
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.template-chip:hover {
+    background-color: alpha(@accent_bg_color, 0.26);
+    border-color: alpha(@accent_color, 0.55);
+}
 "#;
 
 /// Builds a button with both an icon and a text label using `adw::ButtonContent`.

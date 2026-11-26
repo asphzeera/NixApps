@@ -99,7 +99,7 @@ fn full_declarative_workflow_sync_search_install_custom_config_and_git_flake() {
     assert!(report.git_staged_new_files);
     assert!(report.diff.contains("+    obsidian"));
     assert!(report.diff.contains("+    spotify"));
-    assert!(report.diff.contains("+  programs.helix.enable = true;"));
+    assert!(report.diff.contains("+      programs.helix.enable = true;"));
 
     // Both generated files must be visible to Nix Flakes in Git.
     assert!(matches!(

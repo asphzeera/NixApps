@@ -58,11 +58,29 @@ pub fn detect_hostname() -> Option<String> {
 }
 
 /// Suggests a sensible default rebuild command based on the user's `config_dir` and `target`.
+///
+/// Detection is strictly based on standard NixOS/Home Manager files (never shell aliases):
+/// - If `flake.nix` exists and defines `homeConfigurations` without `nixosConfigurations`,
+///   suggests `home-manager switch --flake '<config_dir>'` (no root elevation needed).
+/// - If `flake.nix` exists (standard NixOS or NixOS + integrated Home Manager module),
+///   suggests `nixos-rebuild switch --flake '<config_dir>#<hostname>'` with `BuiltInSudo`.
+/// - Otherwise falls back to classic `home-manager switch` or `nixos-rebuild switch`.
 pub fn suggest_rebuild_command(config_dir: &Path, target: ConfigTarget) -> RebuildCommand {
-    let has_flake = config_dir.join("flake.nix").is_file();
+    let flake_path = config_dir.join("flake.nix");
     let dir_str = config_dir.display();
 
-    if has_flake {
+    if flake_path.is_file() {
+        let flake_src = fs::read_to_string(&flake_path).unwrap_or_default();
+        let has_nixos = flake_src.contains("nixosConfigurations");
+        let has_hm = flake_src.contains("homeConfigurations");
+
+        if has_hm && !has_nixos {
+            return RebuildCommand {
+                command: format!("home-manager switch --flake '{dir_str}'"),
+                elevation: ElevationMethod::None,
+            };
+        }
+
         let host = detect_hostname().unwrap_or_else(|| "default".to_string());
         let command = format!("nixos-rebuild switch --flake '{dir_str}#{host}'");
         RebuildCommand {
@@ -218,11 +236,29 @@ mod tests {
     #[test]
     fn suggests_flake_rebuild_when_flake_nix_exists() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("flake.nix"), "{}\n").unwrap();
+        fs::write(
+            dir.path().join("flake.nix"),
+            "{ outputs = { ... }: { nixosConfigurations.host = {}; }; }\n",
+        )
+        .unwrap();
 
         let cmd = suggest_rebuild_command(dir.path(), ConfigTarget::HomeManager);
         assert_eq!(cmd.elevation, ElevationMethod::BuiltInSudo);
         assert!(cmd.command.starts_with("nixos-rebuild switch --flake "));
+    }
+
+    #[test]
+    fn suggests_standalone_home_manager_flake_command() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("flake.nix"),
+            "{ outputs = { ... }: { homeConfigurations.user = {}; }; }\n",
+        )
+        .unwrap();
+
+        let cmd = suggest_rebuild_command(dir.path(), ConfigTarget::HomeManager);
+        assert_eq!(cmd.elevation, ElevationMethod::None);
+        assert!(cmd.command.starts_with("home-manager switch --flake "));
     }
 
     #[test]

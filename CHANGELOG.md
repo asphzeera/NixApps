@@ -8,12 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Auto-closing rebuild log dialog paired with a **System Updated Successfully!** confirmation popup (with optional **View Log** button) upon clean rebuild completion.
+- Floating bottom-right **nested pending-changes pill** (`N pending changes` + inner `Apply & Rebuild` pill button) replacing the top banner for queued installs/removals.
+- Accent-styled **declarative Nix template chips** (`Insert programs.<name>.enable` and `Insert override template`) with explanatory hover tooltips.
 - Built-in native Libadwaita **Administrator Password Dialog** (`ElevationMethod::BuiltInSudo` via `sudo -S` stdin pipe) so **Apply & Rebuild** opens a graphical password prompt on every Wayland compositor (Niri, Hyprland, Sway, GNOME, KDE) even without a running Polkit agent.
 - Branded **About NixApps** dialog (`help-about-symbolic`) with embedded NixApps SVG logo, version, GitHub link, and AI transparency summary.
-- Embedded stylized **NixOS snowflake SVG** in the Setup hero.
+- Embedded stylized **NixOS snowflake SVG** (scaled to 192×192 vector `GtkPicture`) in the Setup hero.
 - Added `adwaita-icon-theme`, `hicolor-icon-theme`, `librsvg`, and `gsettings-desktop-schemas` to `flake.nix` (`packages.default` and `devShells.default`).
+- Improved rebuild command auto-detection (`suggest_rebuild_command`) to distinguish standalone Home Manager flakes (`homeConfigurations`) from NixOS system flakes (`nixosConfigurations`).
 
 ### Fixed
+- Made the generated `nixapps-managed.nix` module **auto-adaptive** (`config = lib.mkMerge` guarded by `options ? home && options.home ? packages` and `options ? environment && options.environment ? systemPackages`), preventing `option 'home-manager.users.<user>.environment' does not exist` errors regardless of whether the file is imported in `home.nix` or `configuration.nix`.
+- Replaced the nested-scroll `AdwStatusPage` in the Setup tab with a clean, non-scrollable responsive header box so the NixOS snowflake logo and description are never clipped or obstructed.
 - Upgraded all action buttons (Install, Remove/Uninstall, Apply & Rebuild, Review Diff, Homepage, Copy, Sync, Inspect Dependencies) to use `adw::ButtonContent` so icons and labels render side by side in GTK4.
 - Fixed `pkexec` failing inside `nix develop` / Nix shells with `The value for the SHELL variable was not found in the /etc/shells file` by resolving a valid shell from `/etc/shells`, detaching stdin, and preserving standard NixOS system `PATH` entries during elevated rebuilds.
 
