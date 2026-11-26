@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use nixapps_core::{
     CatalogDb, Category, ConfigTarget, ElevationMethod, EnrichedPackageInfo, FEATURED_ATTRS,
@@ -57,6 +58,7 @@ pub struct NixAppsModel {
     last_git_warning: Option<String>,
     is_rebuilding: bool,
     rebuild_status: String,
+    toast_generation: u64,
 }
 
 #[derive(Debug)]
@@ -71,6 +73,7 @@ pub enum AppMsg {
     SwitchTab(&'static str),
     BannerActionClicked,
     OpenAboutDialog,
+    DismissTopToast(u64),
 
     // Background Metadata & Icons
     IconResolved {
@@ -127,10 +130,11 @@ pub enum AppMsg {
 
 pub struct AppWidgets {
     window: adw::ApplicationWindow,
-    toast_overlay: adw::ToastOverlay,
     back_button: gtk::Button,
     sync_button: gtk::Button,
     status_banner: adw::Banner,
+    top_toast_revealer: gtk::Revealer,
+    top_toast_label: gtk::Label,
     pending_pill_revealer: gtk::Revealer,
     pending_pill_label: gtk::Label,
     root_stack: gtk::Stack,
@@ -449,6 +453,7 @@ impl Component for NixAppsModel {
             last_git_warning: None,
             is_rebuilding: false,
             rebuild_status: "Ready to run system rebuild.".to_string(),
+            toast_generation: 0,
         };
 
         model.reload_managed_state();
@@ -1534,6 +1539,53 @@ impl Component for NixAppsModel {
             .child(&pending_pill_box)
             .build();
 
+        // --- Floating Top-Right Notification Popup (opaque, left-aligned text, auto-dismiss) ---
+        let top_toast_icon = gtk::Image::builder()
+            .icon_name("emblem-ok-symbolic")
+            .pixel_size(16)
+            .css_classes(["pending-pill-dot"])
+            .build();
+
+        let top_toast_label = gtk::Label::builder()
+            .label("")
+            .halign(gtk::Align::Start)
+            .xalign(0.0)
+            .wrap(true)
+            .max_width_chars(44)
+            .build();
+
+        let top_toast_close = gtk::Button::builder()
+            .icon_name("window-close-symbolic")
+            .css_classes(["flat", "circular"])
+            .tooltip_text("Dismiss")
+            .valign(gtk::Align::Center)
+            .build();
+        {
+            let s = sender.clone();
+            top_toast_close.connect_clicked(move |_| s.input(AppMsg::DismissTopToast(0)));
+        }
+
+        let top_toast_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(10)
+            .valign(gtk::Align::Center)
+            .css_classes(["top-toast-pill"])
+            .build();
+        top_toast_box.append(&top_toast_icon);
+        top_toast_box.append(&top_toast_label);
+        top_toast_box.append(&top_toast_close);
+
+        let top_toast_revealer = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideDown)
+            .transition_duration(200)
+            .reveal_child(false)
+            .halign(gtk::Align::End)
+            .valign(gtk::Align::Start)
+            .margin_end(20)
+            .margin_top(12)
+            .child(&top_toast_box)
+            .build();
+
         // --- Window assembly ---
         let main_vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
         main_vbox.append(&status_banner);
@@ -1541,22 +1593,21 @@ impl Component for NixAppsModel {
 
         let content_overlay = gtk::Overlay::new();
         content_overlay.set_child(Some(&main_vbox));
+        content_overlay.add_overlay(&top_toast_revealer);
         content_overlay.add_overlay(&pending_pill_revealer);
 
         let toolbar_view = adw::ToolbarView::new();
         toolbar_view.add_top_bar(&header);
         toolbar_view.set_content(Some(&content_overlay));
-
-        let toast_overlay = adw::ToastOverlay::new();
-        toast_overlay.set_child(Some(&toolbar_view));
-        window.set_content(Some(&toast_overlay));
+        window.set_content(Some(&toolbar_view));
 
         let widgets = AppWidgets {
             window,
-            toast_overlay,
             back_button,
             sync_button,
             status_banner,
+            top_toast_revealer,
+            top_toast_label,
             pending_pill_revealer,
             pending_pill_label,
             root_stack,
@@ -1722,6 +1773,12 @@ impl Component for NixAppsModel {
             }
             AppMsg::OpenAboutDialog => {
                 show_about_dialog(&widgets.window);
+                return;
+            }
+            AppMsg::DismissTopToast(generation) => {
+                if generation == 0 || generation == self.toast_generation {
+                    widgets.top_toast_revealer.set_reveal_child(false);
+                }
                 return;
             }
             AppMsg::IconResolved {
@@ -2100,9 +2157,12 @@ impl Component for NixAppsModel {
                     .map(|c| c.relative_import_path())
                     .unwrap_or_else(|| "./modules/nixapps-managed.nix".to_string());
                 widgets.window.clipboard().set_text(&rel);
-                widgets
-                    .toast_overlay
-                    .add_toast(adw::Toast::new(&format!("Copied `{rel}` to clipboard")));
+                show_top_toast(
+                    self,
+                    widgets,
+                    &sender,
+                    &format!("Copied `{rel}` to clipboard"),
+                );
                 return;
             }
             AppMsg::StartSync => {
@@ -2155,11 +2215,30 @@ impl Component for NixAppsModel {
         }
 
         if let Some(text) = toast_msg {
-            widgets.toast_overlay.add_toast(adw::Toast::new(&text));
+            show_top_toast(self, widgets, &sender, &text);
         }
 
         refresh_all_views(self, widgets, &sender);
     }
+}
+
+/// Displays an opaque top-right notification that auto-dismisses after 3.5 seconds.
+fn show_top_toast(
+    model: &mut NixAppsModel,
+    widgets: &AppWidgets,
+    sender: &ComponentSender<NixAppsModel>,
+    text: &str,
+) {
+    model.toast_generation = model.toast_generation.wrapping_add(1).max(1);
+    let generation = model.toast_generation;
+
+    widgets.top_toast_label.set_label(text);
+    widgets.top_toast_revealer.set_reveal_child(true);
+
+    let s = sender.clone();
+    gtk::glib::timeout_add_local_once(Duration::from_millis(3500), move || {
+        s.input(AppMsg::DismissTopToast(generation));
+    });
 }
 
 /// Shows a native Libadwaita password popup dialog for `sudo -S` authentication.

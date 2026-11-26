@@ -8,8 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Opaque top-right auto-dismissing notifications (3.5s timer + manual close, left-aligned text) so action feedback never overlaps the opaque bottom-right pending-changes pill.
 - Auto-closing rebuild log dialog paired with a **System Updated Successfully!** confirmation popup (with optional **View Log** button) upon clean rebuild completion.
-- Floating bottom-right **nested pending-changes pill** (`N pending changes` + inner `Apply & Rebuild` pill button) replacing the top banner for queued installs/removals.
+- Floating bottom-right **opaque nested pending-changes pill** (`N pending changes` + inner `Apply & Rebuild` pill button) replacing the top banner for queued installs/removals.
 - Accent-styled **declarative Nix template chips** (`Insert programs.<name>.enable` and `Insert override template`) with explanatory hover tooltips.
 - Built-in native Libadwaita **Administrator Password Dialog** (`ElevationMethod::BuiltInSudo` via `sudo -S` stdin pipe) so **Apply & Rebuild** opens a graphical password prompt on every Wayland compositor (Niri, Hyprland, Sway, GNOME, KDE) even without a running Polkit agent.
 - Branded **About NixApps** dialog (`help-about-symbolic`) with embedded NixApps SVG logo, version, GitHub link, and AI transparency summary.

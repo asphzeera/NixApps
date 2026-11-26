@@ -78,15 +78,25 @@ pub const APP_CSS: &str = r#"
 }
 
 .pending-pill {
-    background-color: @popover_bg_color;
-    border: 1px solid alpha(@accent_color, 0.35);
+    background-color: mix(@window_bg_color, @window_fg_color, 0.09);
+    color: @window_fg_color;
+    border: 1px solid mix(@window_bg_color, @accent_color, 0.45);
     border-radius: 999px;
     padding: 6px 8px 6px 16px;
-    box-shadow: 0 6px 20px alpha(#000000, 0.28);
+    box-shadow: 0 6px 20px alpha(#000000, 0.35);
 }
 
 .pending-pill-dot {
     color: @accent_color;
+}
+
+.top-toast-pill {
+    background-color: mix(@window_bg_color, @window_fg_color, 0.10);
+    color: @window_fg_color;
+    border: 1px solid mix(@window_bg_color, @window_fg_color, 0.22);
+    border-radius: 14px;
+    padding: 8px 10px 8px 14px;
+    box-shadow: 0 6px 20px alpha(#000000, 0.32);
 }
 
 .template-chip {
