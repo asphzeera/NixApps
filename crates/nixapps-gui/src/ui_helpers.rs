@@ -114,16 +114,6 @@ pub const APP_CSS: &str = r#"
     border-color: alpha(@accent_color, 0.55);
 }
 
-popover.template-help-popover > contents {
-    background-color: mix(@window_bg_color, @window_fg_color, 0.12);
-    color: @window_fg_color;
-    border: 1px solid mix(@window_bg_color, @accent_color, 0.45);
-    border-radius: 10px;
-    padding: 10px 14px;
-    box-shadow: 0 6px 20px alpha(#000000, 0.35);
-    opacity: 1.0;
-}
-
 tooltip,
 tooltip.background {
     background-color: mix(@window_bg_color, @window_fg_color, 0.14);

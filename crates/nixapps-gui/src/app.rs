@@ -1232,74 +1232,14 @@ impl Component for NixAppsModel {
             .margin_bottom(6)
             .build();
 
-        let make_hover_popover = |parent: &gtk::Button, help_text: &str| {
-            let lbl = gtk::Label::builder()
-                .label(help_text)
-                .halign(gtk::Align::Start)
-                .xalign(0.0)
-                .wrap(true)
-                .max_width_chars(46)
-                .css_classes(["caption"])
-                .build();
-
-            let row = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .spacing(8)
-                .build();
-            let icon = gtk::Image::builder()
-                .icon_name("dialog-information-symbolic")
-                .pixel_size(16)
-                .valign(gtk::Align::Start)
-                .css_classes(["pending-pill-dot"])
-                .build();
-            row.append(&icon);
-            row.append(&lbl);
-
-            let pop = gtk::Popover::builder()
-                .child(&row)
-                .autohide(false)
-                .has_arrow(false)
-                .can_focus(false)
-                .position(gtk::PositionType::Bottom)
-                .halign(gtk::Align::Start)
-                .css_classes(["template-help-popover"])
-                .build();
-            pop.set_parent(parent);
-            // Align popover's left edge directly with the chip's left edge.
-            pop.set_pointing_to(Some(&gtk::gdk::Rectangle::new(0, 0, 1, 1)));
-            pop.set_offset(0, 6);
-
-            let motion = gtk::EventControllerMotion::new();
-            let pop_in = pop.clone();
-            motion.connect_enter(move |_, _, _| {
-                pop_in.popup();
-            });
-            let pop_out = pop.clone();
-            motion.connect_leave(move |_| {
-                pop_out.popdown();
-            });
-            parent.add_controller(motion);
-            let pop_destroy = pop.clone();
-            parent.connect_destroy(move |_| {
-                pop_destroy.unparent();
-            });
-            pop
-        };
-
         let tmpl_programs_btn = icon_button(
             "list-add-symbolic",
             "Insert programs.<name>.enable",
             &["template-chip"],
         );
-        let programs_popover = make_hover_popover(
-            &tmpl_programs_btn,
-            "Inserts `programs.<name>.enable = true;` — use this when the app offers built-in NixOS / Home Manager configuration options (e.g. git, helix, firefox, steam) instead of only adding the binary.",
-        );
         {
             let s = sender.clone();
-            let pop = programs_popover.clone();
             tmpl_programs_btn.connect_clicked(move |_| {
-                pop.popdown();
                 s.input(AppMsg::InsertNixTemplate("programs"));
             });
         }
@@ -1309,15 +1249,9 @@ impl Component for NixAppsModel {
             "Insert override template",
             &["template-chip"],
         );
-        let override_popover = make_hover_popover(
-            &tmpl_override_btn,
-            "Inserts a `pkgs.<name>.override { ... }` block — use this when you need to pass custom build options, extra libraries, or plugins to a package (e.g. lutris, ffmpeg, vim).",
-        );
         {
             let s = sender.clone();
-            let pop = override_popover.clone();
             tmpl_override_btn.connect_clicked(move |_| {
-                pop.popdown();
                 s.input(AppMsg::InsertNixTemplate("override"));
             });
         }

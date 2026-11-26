@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opaque top-right auto-dismissing notifications (3.5s timer + manual close, left-aligned text) so action feedback never overlaps the opaque bottom-right pending-changes pill.
 - Auto-closing rebuild log dialog paired with a **System Updated Successfully!** confirmation popup (with optional **View Log** button) upon clean rebuild completion.
 - Floating bottom-right **opaque nested pending-changes pill** (`N pending changes` + inner `Apply & Rebuild` pill button) replacing the top banner for queued installs/removals.
-- Accent-styled **declarative Nix template chips** (`Insert programs.<name>.enable` and `Insert override template`) with explanatory hover tooltips.
+- Accent-styled **declarative Nix template chips** (`Insert programs.<name>.enable` and `Insert override template`).
 - Built-in native Libadwaita **Administrator Password Dialog** (`ElevationMethod::BuiltInSudo` via `sudo -S` stdin pipe) so **Apply & Rebuild** opens a graphical password prompt on every Wayland compositor (Niri, Hyprland, Sway, GNOME, KDE) even without a running Polkit agent.
 - Branded **About NixApps** dialog (`help-about-symbolic`) with embedded NixApps SVG logo, version, GitHub link, and AI transparency summary.
 - Embedded stylized **NixOS snowflake SVG** (scaled to 192×192 vector `GtkPicture`) in the Setup hero.
@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved rebuild command auto-detection (`suggest_rebuild_command`) to distinguish standalone Home Manager flakes (`homeConfigurations`) from NixOS system flakes (`nixosConfigurations`).
 
 ### Fixed
-- Replaced the translucent native GTK tooltip on declarative Nix template chips with a 100% opaque, left-aligned floating `GtkPopover` (`EventControllerMotion`) so hovering never shifts layout or adds scrollbars, and made global tooltips opaque.
+- Made global GTK tooltips opaque for better legibility across themes.
 - Escaped all Pango markup strings (`&amp;`, `&lt;`, `&gt;`, `markup_escape_text`) across `AdwPreferencesGroup` titles and descriptions to eliminate terminal `Gtk-WARNING` spam on startup.
 - Defaulted `GSK_RENDERER=gl` in `flake.nix` (package wrapper and `devShell`) to avoid Vulkan `VK_SUBOPTIMAL_KHR` and deprecated `ngl` warnings on GTK 4.24+ / Wayland compositors like Niri.
 - Made the generated `nixapps-managed.nix` module **auto-adaptive** (`config = lib.mkMerge` guarded by `options ? home && options.home ? packages` and `options ? environment && options.environment ? systemPackages`), preventing `option 'home-manager.users.<user>.environment' does not exist` errors regardless of whether the file is imported in `home.nix` or `configuration.nix`.
